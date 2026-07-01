@@ -180,15 +180,9 @@ getPageItems(activePage).forEach((item,i)=>{
 // ─── MODE UI ──────────────────────────────────────────────────────────────────
 function applyModeUI(mode) {
 currentMode = mode;
-const disabled = mode === 'AUTO';
 
-
-document.querySelectorAll('button[id^="btn-"]').forEach(btn => {
- if (btn.id.includes('-ON') || btn.id.includes('-OFF')) {
-   btn.disabled = disabled;
- }
-});
-
+// Do NOT disable buttons — let .manual-zone.locked (pointer-events:none)
+// prevent clicks while keeping actuator ON/OFF state clearly visible.
 
 const isAuto   = mode === 'AUTO';
 const autoBtn  = document.getElementById('btnModeAuto');
@@ -196,11 +190,9 @@ const manBtn   = document.getElementById('btnModeManual');
 const zone     = document.getElementById('manualZone');
 const badge    = document.getElementById('modeBadge');
 
-
 autoBtn.classList.toggle('active', isAuto);
 manBtn.classList.toggle('active',  !isAuto);
 zone.classList.toggle('locked',    isAuto);
-
 
 badge.innerText = mode;
 badge.className = isAuto ? 'badge badge-purple' : 'badge badge-amber';
