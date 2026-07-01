@@ -289,9 +289,8 @@ if (!records||!records.length){tbody.innerHTML='<tr><td colspan="9" style="color
 tbody.innerHTML=records.map(r=>`<tr>
  <td style="white-space:nowrap;font-size:11px;">${fmtTs(r)}</td>
  <td>${modeChip(r.mode)}</td><td>${onOffChip(r.pump)}</td><td>${onOffChip(r.air_pump)}</td>
- <td>${onOffChip(r.filter_pump)}</td><td>${onOffChip(r.peltier)}</td><td>${onOffChip(r.rgb)}</td>
- <td>${r.rgb_color?`<span class="chip chip-blue">${r.rgb_color}</span>`:'--'}</td>
- <td>${(r.rgb_brightness!==null&&r.rgb_brightness!==undefined)?r.rgb_brightness+'%':'--'}</td></tr>`).join('');
+  <td>${onOffChip(r.filter_pump)}</td><td>${onOffChip(r.peltier)}</td><td>${onOffChip(r.rgb)}</td>
+  <td>${(r.rgb_brightness!==null&&r.rgb_brightness!==undefined)?r.rgb_brightness+'%':'--'}</td></tr>`).join('');
 }
 function renderSmsHistory(records) {
 const tbody=document.getElementById('smsHistoryBody');
@@ -349,12 +348,6 @@ function setManualRelay(f, v) {
 }
 
 
-function setRgbColour(c) {
-document.querySelectorAll('#colourGrid .btn-colour').forEach(b=>{
- b.classList.toggle('active', b.dataset.colour===c);
-});
-sendControl({rgb_color:c});
-}
 function setRgbBrightness(l) { sendControl({rgb_brightness:Number(l)}); }
 function controlStepper(d,s) { sendControl({stepper_rotate:true,stepper_direction:d,stepper_rotations:s}); }
 function sendGsmAlert() { sendControl({gsm_alert:'TEST_ALERT'}); }
@@ -369,7 +362,6 @@ document.getElementById('turbidityValue').innerText = fmtValue(data.turbidity,' 
 document.getElementById('distanceValue').innerText  = fmtValue(data.distance_cm,' cm');
 document.getElementById('cameraValue').innerText    = data.camera_connected ? `${data.detection?.count||0} detections` : 'Offline';
 document.getElementById('rgbValue').innerText       = data.rgb||'--';
-document.getElementById('rgbColor').innerText       = data.rgb_color||'--';
 document.getElementById('gsmStatus').innerText      = data.gsm_status||'--';
 document.getElementById('connStatus').innerText     = `Connection: ${data.connection_source||'Offline'}`;
 document.getElementById('serialStatus').innerText   = data.serial_connected ? 'Connected' : 'Disconnected';
@@ -407,13 +399,6 @@ if (data.rgb_brightness!==undefined) {
  }
 }
 
-
-// Sync active colour swatch
-if (data.rgb_color) {
- document.querySelectorAll('#colourGrid .btn-colour').forEach(b=>{
-   b.classList.toggle('active', b.dataset.colour===data.rgb_color);
- });
-}
 
 if (currentMode !== 'MANUAL') {
   refreshAllActuatorButtons(data);

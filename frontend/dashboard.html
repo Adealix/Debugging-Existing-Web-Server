@@ -193,14 +193,6 @@
           </div>
 
 
-          <div class="colour-grid" style="margin-top:10px;" id="colourGrid">
-            <button class="btn-colour swatch-blue"   onclick="setRgbColour('blue')"   data-colour="blue">Blue</button>
-            <button class="btn-colour swatch-cyan"   onclick="setRgbColour('cyan')"   data-colour="cyan">Cyan</button>
-            <button class="btn-colour swatch-purple" onclick="setRgbColour('purple')" data-colour="purple">Purple</button>
-            <button class="btn-colour swatch-white"  onclick="setRgbColour('white')"  data-colour="white">White</button>
-          </div>
-
-
           <div class="slider-row">
             <span style="font-size:11px;color:var(--muted);">Brightness</span>
             <input id="rgbSlider" type="range" min="0" max="100" value="60"
@@ -212,7 +204,6 @@
 
           <div class="mini-row" style="margin-top:10px;">
             <div class="mini"><div class="k">RGB status</div><div class="v" id="rgbValue">--</div></div>
-            <div class="mini"><div class="k">Colour</div><div class="v" id="rgbColor">--</div></div>
           </div>
 
 
@@ -321,7 +312,7 @@
         <div class="table-header"><div class="panel-title" style="font-size:14px;">⚙️ Actuator History</div><div class="panel-sub">Last 10 actuator snapshots from <code>actuator_history</code>.</div></div>
         <div class="table-scroll">
           <table>
-            <thead><tr><th>Timestamp</th><th>Mode</th><th>Pump</th><th>Air Pump</th><th>Filter Pump</th><th>Peltier</th><th>RGB</th><th>Colour</th><th>Brightness</th></tr></thead>
+            <thead><tr><th>Timestamp</th><th>Mode</th><th>Pump</th><th>Air Pump</th><th>Filter Pump</th><th>Peltier</th><th>RGB</th><th>Brightness</th></tr></thead>
             <tbody id="actuatorHistoryBody"><tr><td colspan="9" style="color:#6b7280;padding:20px 16px;">Loading…</td></tr></tbody>
           </table>
         </div>

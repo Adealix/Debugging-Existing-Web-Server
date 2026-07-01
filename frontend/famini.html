@@ -104,14 +104,6 @@
           <button class="btn btn-danger" onclick="sendGsmAlert()">📲 GSM Test</button>
         </div>
 
-        <div class="ctrl-label">RGB Colour</div>
-        <div class="colour-grid" id="colourGrid">
-          <button class="btn-colour swatch-blue" onclick="setRgbColour('blue')" data-colour="blue">Blue</button>
-          <button class="btn-colour swatch-cyan" onclick="setRgbColour('cyan')" data-colour="cyan">Cyan</button>
-          <button class="btn-colour swatch-purple" onclick="setRgbColour('purple')" data-colour="purple">Purple</button>
-          <button class="btn-colour swatch-white" onclick="setRgbColour('white')" data-colour="white">White</button>
-        </div>
-
         <div class="slider-row">
           <span style="font-size:11px;color:var(--muted);">Brightness</span>
           <input id="rgbSlider" type="range" min="0" max="100" value="60" oninput="document.getElementById('brightnessVal').innerText=this.value+'%'; setRgbBrightness(this.value)" />
@@ -120,7 +112,6 @@
       </div>
 
       <div class="mini-row" style="margin-top:16px;">
-        <div class="mini"><div class="k">RGB colour</div><div class="v" id="rgbColorDisplay">--</div></div>
         <div class="mini"><div class="k">Mode</div><div class="v" id="modeDisplay">AUTO</div></div>
       </div>
     </div>
@@ -168,13 +159,6 @@ function updateButtonStates(key, state) {
   offBtn.classList.toggle('is-active', !isOn);
   offBtn.classList.toggle('is-inactive', isOn);
 }
-function setRgbColour(c) {
-  const map={blue:[0,0,255],cyan:[135,206,235],purple:[128,0,128],white:[255,244,229]};
-  document.querySelectorAll('#colourGrid .btn-colour').forEach(b=>b.classList.toggle('active', b.dataset.colour===c));
-  document.getElementById('rgbColorDisplay').innerText=c.toUpperCase();
-  const rgb=map[c];
-  if (rgb) sendControl({rgb_color:c, rgb_rgb:`${rgb[0]},${rgb[1]},${rgb[2]}`});
-}
 function setRgbBrightness(l) { sendControl({rgb_brightness:Number(l)}); }
 function sendGsmAlert() { sendControl({gsm_alert:'TEST_ALERT'}); }
 function applyState(data) {
@@ -183,7 +167,7 @@ function applyState(data) {
   document.getElementById('faminiTurbidity').innerText = fmtValue(data.turbidity,' NTU');
   document.getElementById('faminiPump').innerText = data.pump||'--';
   document.getElementById('faminiLight').innerText = fmtValue(data.light_lux,' lux');
-  document.getElementById('faminiRgb').innerText = data.rgb_color ? `${data.rgb_color.toUpperCase()} ${data.rgb_brightness||0}%` : (data.rgb||'--');
+  document.getElementById('faminiRgb').innerText = data.rgb||'--';
   document.getElementById('connStatus').innerText = `Connection: ${data.connection_source||'Offline'}`;
   document.getElementById('clock').innerText = new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
   if (data.rgb_brightness!==undefined) {
@@ -192,10 +176,6 @@ function applyState(data) {
       slider.value=data.rgb_brightness;
       document.getElementById('brightnessVal').innerText=`${data.rgb_brightness}%`;
     }
-  }
-  if (data.rgb_color) {
-    document.querySelectorAll('#colourGrid .btn-colour').forEach(b=> b.classList.toggle('active', b.dataset.colour===data.rgb_color));
-    document.getElementById('rgbColorDisplay').innerText=data.rgb_color.toUpperCase();
   }
   const serverMode=(data.mode||'AUTO').toUpperCase();
   if (serverMode!==currentMode) applyModeUI(serverMode);

@@ -95,18 +95,16 @@ function applyModeUI(mode) {
 }
 function setMode(m) { applyModeUI(m); sendControl({mode:m}); }
 function setManualRelay(f,v) { if (currentMode==='AUTO') return; const onBtn=document.getElementById(`btn-${f}-ON`); const offBtn=document.getElementById(`btn-${f}-OFF`); if (onBtn && offBtn) { const isOn = v==='ON'; onBtn.classList.toggle('is-active', isOn); onBtn.classList.toggle('is-inactive', !isOn); offBtn.classList.toggle('is-active', !isOn); offBtn.classList.toggle('is-inactive', isOn); } sendControl({[f]:v}); }
-function setRgbColour(c) { const map={blue:[0,0,255],cyan:[135,206,235],purple:[128,0,128],white:[255,244,229]}; document.querySelectorAll('#colourGrid .btn-colour').forEach(b=>b.classList.toggle('active', b.dataset.colour===c)); const rgb=map[c]; if (rgb) sendControl({rgb_color:c, rgb_rgb:`${rgb[0]},${rgb[1]},${rgb[2]}`}); }
 function setRgbBrightness(l) { sendControl({rgb_brightness:Number(l)}); }
 function applyState(data) {
   document.getElementById('val-light').innerText = fmtValue(data.light_lux,' lux');
-  document.getElementById('val-rgb').innerText = data.rgb_color ? `${data.rgb_color.toUpperCase()} ${data.rgb_brightness||0}%` : (data.rgb||'--');
+  document.getElementById('val-rgb').innerText = data.rgb||'--';
   document.getElementById('val-temp').innerText = fmtValue(data.temp,'°C');
   document.getElementById('val-pelt').innerText = data.peltier||'--';
   document.getElementById('val-turb').innerText = fmtValue(data.turbidity,' NTU');
   document.getElementById('val-pump').innerText = data.pump||'--';
   document.getElementById('connStatus').innerText = `Connection: ${data.connection_source||'Offline'}`;
   document.getElementById('clock').innerText = new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-  if (data.rgb_color) { document.querySelectorAll('#colourGrid .btn-colour').forEach(b=> b.classList.toggle('active', b.dataset.colour===data.rgb_color)); }
   if (data.rgb_brightness!==undefined) { const slider=document.getElementById('rgbSlider'); if (document.activeElement!==slider) { slider.value=data.rgb_brightness; document.getElementById('brightnessVal').innerText=`${data.rgb_brightness}%`; } }
   const serverMode=(data.mode||'AUTO').toUpperCase();
   if (serverMode!==currentMode) applyModeUI(serverMode);

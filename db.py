@@ -119,7 +119,6 @@ class MongoLogger:
             "air_pump":       data.get("air_pump"),
             "filter_pump":    data.get("filter_pump"),
             "rgb":            data.get("rgb"),
-            "rgb_color":      data.get("rgb_color"),
             "rgb_brightness": data.get("rgb_brightness"),
             "mode":           data.get("mode"),
         }

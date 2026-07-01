@@ -44,11 +44,12 @@ const char* MQTT_CLIENT   = "esp32_crayfish";
 
 
 // Command subscribe topics (Pi -> ESP32)
-#define TOPIC_CMD_AIRPUMP     "crayfish/cmd/airpump"
-#define TOPIC_CMD_PUMP        "crayfish/cmd/pump"
-#define TOPIC_CMD_COOLING     "crayfish/cmd/cooling"
-#define TOPIC_CMD_LED         "crayfish/cmd/led"
-#define TOPIC_CMD_FEEDER      "crayfish/cmd/feeder"
+#define TOPIC_CMD_AIRPUMP         "crayfish/cmd/airpump"
+#define TOPIC_CMD_PUMP            "crayfish/cmd/pump"
+#define TOPIC_CMD_COOLING         "crayfish/cmd/cooling"
+#define TOPIC_CMD_LED             "crayfish/cmd/led"
+#define TOPIC_CMD_LED_BRIGHTNESS  "crayfish/cmd/led_brightness"
+#define TOPIC_CMD_FEEDER          "crayfish/cmd/feeder"
 // Payload "FEED"          -> manual feed request (only honored when ctrlFeeder.mode == MANUAL)
 // Payload "FEED_DETECTED" -> Raspberry Pi camera detection (Roboflow) sees a
 //                            crayfish; triggers a feed regardless of mode.
@@ -288,8 +289,10 @@ void ledAllOff() {
 }
 
 // Set every LED to the exact same solid white colour -- one consistent push.
+// Brightness is dynamically adjustable via MQTT (ledBrightness global).
 void ledAllOn() {
-  FastLED.setBrightness(LED_BRIGHTNESS);
+  int b = constrain(ledBrightness, 0, 255);
+  FastLED.setBrightness(b);
   fill_solid(leds, NUM_LEDS, CRGB(LED_COLOR_R, LED_COLOR_G, LED_COLOR_B));
   FastLED.show();
 }
@@ -302,18 +305,22 @@ void applyLED(bool turnOn) {
   if (turnOn) {
     ledAllOn();
     if (changed) {
-      String s = String("ON|") + (ctrlLED.mode == AUTO ? "AUTO" : "MANUAL");
+      String s = String("ON|") + (ctrlLED.mode == AUTO ? "AUTO" : "MANUAL") + "|" + ledBrightness;
       mqtt.publish(TOPIC_STATUS_LED, s.c_str());
       Serial.print("[ACTUATOR] LED Strip: ON  | Mode: ");
-      Serial.println(ctrlLED.mode == AUTO ? "AUTO" : "MANUAL");
+      Serial.print(ctrlLED.mode == AUTO ? "AUTO" : "MANUAL");
+      Serial.print(" | Brightness: ");
+      Serial.println(ledBrightness);
     }
   } else {
     ledAllOff();
     if (changed) {
-      String s = String("OFF|") + (ctrlLED.mode == AUTO ? "AUTO" : "MANUAL");
+      String s = String("OFF|") + (ctrlLED.mode == AUTO ? "AUTO" : "MANUAL") + "|" + ledBrightness;
       mqtt.publish(TOPIC_STATUS_LED, s.c_str());
       Serial.print("[ACTUATOR] LED Strip: OFF | Mode: ");
-      Serial.println(ctrlLED.mode == AUTO ? "AUTO" : "MANUAL");
+      Serial.print(ctrlLED.mode == AUTO ? "AUTO" : "MANUAL");
+      Serial.print(" | Brightness: ");
+      Serial.println(ledBrightness);
     }
   }
 
@@ -440,6 +447,15 @@ void mqttCallback(char* topic, byte* payload, unsigned int len) {
   else if (t == TOPIC_CMD_LED && ctrlLED.mode == MANUAL) {
     setLED(msg == "ON");
   }
+  else if (t == TOPIC_CMD_LED_BRIGHTNESS && ctrlLED.mode == MANUAL) {
+    int b = msg.toInt();
+    ledBrightness = constrain(b, 0, 255);
+    Serial.print("[MQTT] LED Brightness set to ");
+    Serial.println(ledBrightness);
+    if (ledCurrentlyOn) {
+      ledAllOn();  // re-apply with new brightness immediately
+    }
+  }
   else if (t == TOPIC_CMD_FEEDER) {
     if (msg == "FEED" && ctrlFeeder.mode == MANUAL) {
       Serial.println("[MQTT] CMD: Feed (Manual)");
@@ -506,6 +522,7 @@ void connectMQTT() {
     mqtt.subscribe(TOPIC_CMD_PUMP);
     mqtt.subscribe(TOPIC_CMD_COOLING);
     mqtt.subscribe(TOPIC_CMD_LED);
+    mqtt.subscribe(TOPIC_CMD_LED_BRIGHTNESS);
     mqtt.subscribe(TOPIC_CMD_FEEDER);
     mqtt.subscribe(TOPIC_MODE_AIRPUMP);
     mqtt.subscribe(TOPIC_MODE_PUMP);

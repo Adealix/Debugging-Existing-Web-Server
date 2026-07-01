@@ -99,11 +99,16 @@ def on_message(client, userdata, msg):
             elif topic == "crayfish/status/filter_pump":
                 S.state["filter_pump"] = value.split("|")[0]
             elif topic == "crayfish/status/led":
-                led_state = value.split("|")[0]
+                parts = value.split("|")
+                led_state = parts[0]
                 S.state["led"] = led_state
                 S.state["rgb"] = led_state
-            elif topic == "crayfish/rgb/color":
-                S.state["rgb_color"] = value.lower()
+                if len(parts) >= 3:
+                    try:
+                        esp_brightness = int(parts[2])
+                        S.state["rgb_brightness"] = int(esp_brightness / 2.55)
+                    except ValueError:
+                        pass
             elif topic == "crayfish/rgb/brightness":
                 S.state["rgb_brightness"] = int(float(value))
             elif topic == "crayfish/status/gsm":
@@ -158,7 +163,6 @@ def on_message(client, userdata, msg):
             "air_pump":       S.state["air_pump"],
             "filter_pump":    S.state["filter_pump"],
             "rgb":            S.state.get("rgb"),
-            "rgb_color":      S.state["rgb_color"],
             "rgb_brightness": S.state["rgb_brightness"],
             "mode":           S.state.get("mode"),
         }

@@ -168,7 +168,7 @@ def apply_serial_update(parsed, raw_line):
 
         prev_gsm = S.state.get("gsm_status")
         for field in ("pump", "peltier", "air_pump", "filter_pump",
-                      "rgb", "gsm_status", "mode", "rgb_color", "rgb_brightness"):
+                       "rgb", "gsm_status", "mode", "rgb_brightness"):
             if parsed.get(field) is not None:
                 S.state[field] = parsed[field]
                 changed = True
@@ -200,7 +200,6 @@ def apply_serial_update(parsed, raw_line):
             "air_pump":       S.state["air_pump"],
             "filter_pump":    S.state["filter_pump"],
             "rgb":            S.state["rgb"],
-            "rgb_color":      S.state["rgb_color"],
             "rgb_brightness": S.state["rgb_brightness"],
             "mode":           S.state["mode"],
         }
@@ -243,7 +242,6 @@ def live_snapshot():
             "air_pump":          S.state["air_pump"],
             "filter_pump":       S.state["filter_pump"],
             "rgb":               S.state["rgb"],
-            "rgb_color":         S.state["rgb_color"],
             "rgb_brightness":    S.state["rgb_brightness"],
             "gsm_status":        S.state["gsm_status"],
             "mode":              S.state["mode"],
@@ -262,7 +260,7 @@ def live_snapshot():
             for field in (
                 "ph", "temp", "turbidity", "light_lux", "distance_cm",
                 "pump", "peltier", "air_pump", "filter_pump",
-                "rgb", "rgb_color", "rgb_brightness", "gsm_status"):
+                "rgb", "rgb_brightness", "gsm_status"):
                 snap[field] = None
     return snap
 

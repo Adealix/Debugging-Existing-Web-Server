@@ -282,31 +282,22 @@ def api_control():
         _relay("peltier",     "PELTIER")
         _relay("rgb",         "RGB")
 
-        # ── RGB colour ────────────────────────────────────────────────────────
-        if "rgb_color" in data:
-            if not manual_active:
-                rejected.append("rgb_color")
-            else:
-                colour = str(data["rgb_color"]).lower()
-                valid_colours = ("blue", "cyan", "purple", "white", "red", "green", "yellow")
-                if colour in valid_colours:
-                    S.state["rgb_color"] = colour
-                    commands.append(f"RGB_COLOR={colour.upper()}")
-                    log_event("control", "RGB colour changed", f"Colour set to {colour}")
-                    mqtt_messages.append(("crayfish/cmd/rgb_color", colour.upper()))
-
-        # ── RGB brightness ────────────────────────────────────────────────────
+        # ── LED brightness (0-100%) ───────────────────────────────────────────
         if "rgb_brightness" in data:
             if not manual_active:
                 rejected.append("rgb_brightness")
             else:
                 try:
-                    brightness = max(0, min(100, int(data["rgb_brightness"])))
-                    S.state["rgb_brightness"] = brightness
-                    commands.append(f"RGB_BRIGHTNESS={brightness}")
-                    log_event("control", "RGB brightness changed",
-                              f"Brightness set to {brightness}%")
-                    mqtt_messages.append(("crayfish/cmd/rgb_brightness", str(brightness)))
+                    pct = max(0, min(100, int(data["rgb_brightness"])))
+                    # Map 0-100% → 0-255 for ESP32 FastLED
+                    esp_val = int(pct * 2.55)
+                    S.state["rgb_brightness"] = pct
+                    commands.append(f"LED_BRIGHTNESS={esp_val}")
+                    log_event("control", "LED brightness changed",
+                              f"Brightness set to {pct}%")
+                    mqtt_messages.append(("crayfish/cmd/led_brightness", str(esp_val)))
+                except (ValueError, TypeError):
+                    pass
                 except (ValueError, TypeError):
                     pass
 
