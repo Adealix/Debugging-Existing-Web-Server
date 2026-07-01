@@ -1,11 +1,10 @@
 """
 db.py — MongoDB logger for Crayfish IoT System
-------------------------------------------------
+-----------------------------------------------
 Collections:
-  • sensor_history   – analog sensor readings  (ph, temp, turbidity, light_lux, distance_cm, health)
-  • actuator_history – digital actuator states  (pump, peltier, air_pump, filter_pump, rgb, rgb_color,
-                                                 rgb_brightness, mode)
-  • sms_events       – GSM / SMS actions and delivery confirmations
+  • sensor_history   – analog sensor readings
+  • actuator_history – digital actuator states
+  • sms_events       – GSM / SMS actions
 
 FIFO cap: only the latest MAX_HISTORY (10) documents are kept per collection.
 Uses a module-level singleton so every import shares the same connection.
@@ -15,7 +14,7 @@ import os
 from pymongo import MongoClient, DESCENDING
 from datetime import datetime
 
-MAX_HISTORY = 10  # FIFO cap per collection
+MAX_HISTORY = 10
 
 
 class MongoLogger:
@@ -25,7 +24,8 @@ class MongoLogger:
         self.sensor_col   = None
         self.actuator_col = None
         self.sms_col      = None
-        self.col = None  # legacy alias
+        self.col = None
+        self._write_count = 0  # throttle _prune to every N writes
 
         if not uri:
             print("[MongoLogger] No URI provided — MongoDB disabled.")
@@ -33,13 +33,13 @@ class MongoLogger:
 
         try:
             self.client = MongoClient(uri, serverSelectionTimeoutMS=6000)
-            self.client.admin.command("ping")  # fail fast if unreachable
+            self.client.admin.command("ping")
             self.db = self.client["crayfish_db"]
 
             self.sensor_col   = self.db["sensor_history"]
             self.actuator_col = self.db["actuator_history"]
             self.sms_col      = self.db["sms_events"]
-            self.col          = self.sensor_col  # legacy alias
+            self.col          = self.sensor_col
 
             self._ensure_indexes()
             print("[MongoLogger] Connected to MongoDB Atlas.")
@@ -57,7 +57,6 @@ class MongoLogger:
                     pass
 
     def _prune(self, col):
-        """Delete all but the MAX_HISTORY most-recent documents (FIFO)."""
         if col is None:
             return
         try:
@@ -73,7 +72,11 @@ class MongoLogger:
         except Exception:
             pass
 
-    # ----------------------------------------------------------------- inserts
+    def _prune_if_needed(self, col):
+        self._write_count += 1
+        if self._write_count % 10 == 0:
+            self._prune(col)
+
     def insert_sensor(self, data: dict):
         if self.sensor_col is None:
             return
@@ -91,7 +94,7 @@ class MongoLogger:
         }
         try:
             self.sensor_col.insert_one(doc)
-            self._prune(self.sensor_col)
+            self._prune_if_needed(self.sensor_col)
         except Exception as e:
             print(f"[MongoLogger] insert_sensor error: {e}")
 
@@ -114,7 +117,7 @@ class MongoLogger:
         }
         try:
             self.actuator_col.insert_one(doc)
-            self._prune(self.actuator_col)
+            self._prune_if_needed(self.actuator_col)
         except Exception as e:
             print(f"[MongoLogger] insert_actuator error: {e}")
 
@@ -129,11 +132,10 @@ class MongoLogger:
         }
         try:
             self.sms_col.insert_one(doc)
-            self._prune(self.sms_col)
+            self._prune_if_needed(self.sms_col)
         except Exception as e:
             print(f"[MongoLogger] insert_sms_event error: {e}")
 
-    # legacy method — routes to both sensor + actuator + sms
     def insert(self, data: dict):
         self.insert_sensor(data)
         self.insert_actuator(data)
@@ -141,7 +143,6 @@ class MongoLogger:
         if gsm:
             self.insert_sms_event(status=gsm, detail=data.get("serial_raw", ""))
 
-    # ----------------------------------------------------------------- queries
     def get_sensor_history(self, limit: int = MAX_HISTORY) -> list:
         if self.sensor_col is None:
             return []
@@ -178,7 +179,6 @@ class MongoLogger:
         except Exception:
             return []
 
-    # legacy aliases
     def get_history(self, limit: int = MAX_HISTORY) -> list:
         return self.get_sensor_history(limit)
 
@@ -186,9 +186,5 @@ class MongoLogger:
         return self.get_sensor_history(limit)
 
 
-# ── Module-level singleton ────────────────────────────────────────────────────
-# Imported by helpers.py, app.py, server.py — all share ONE connection.
-# DB_URI must be in environment before this module is first imported.
-# app.py loads .env at the very top (see app.py fix) to guarantee this.
 _DB_URI = os.getenv("DB_URI")
 mongo_logger = MongoLogger(_DB_URI)

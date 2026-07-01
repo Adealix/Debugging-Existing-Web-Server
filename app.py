@@ -24,7 +24,6 @@ from db import mongo_logger  # noqa: F401  — import triggers connection + ping
 
 # ── 4. Everything else ────────────────────────────────────────────────────────
 from flask import Flask, Response, jsonify, request, redirect, send_from_directory
-from datetime import datetime
 
 from helpers import (
     get_local_ip, init_supervision_annotators,
@@ -50,21 +49,6 @@ app = Flask(
 )
 
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "frontend")
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Helper: serialise MongoDB records for JSON responses
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _serialise(records: list) -> list:
-    out = []
-    for rec in records:
-        rec = dict(rec)
-        rec["_id"] = str(rec.get("_id", ""))
-        if isinstance(rec.get("timestamp"), datetime):
-            rec["timestamp"] = rec["timestamp"].isoformat()
-        out.append(rec)
-    return out
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -175,20 +159,24 @@ def ngrok_status():
 @app.route("/history")
 @app.route("/sensor_history")
 def sensor_history():
-    """Last 10 analog sensor readings (FIFO-capped by db.py)."""
-    return jsonify(_serialise(mongo_logger.get_sensor_history(10)))
+    """Last 10 analog sensor readings (from in-memory deque — fast)."""
+    with S.state_lock:
+        records = list(S.history)[:10]
+    return jsonify(records)
 
 
 @app.route("/actuator_history")
 def actuator_history():
-    """Last 10 digital actuator snapshots."""
-    return jsonify(_serialise(mongo_logger.get_actuator_history(10)))
+    """Last 10 digital actuator snapshots (from in-memory deque — fast)."""
+    with S.state_lock:
+        records = list(S.history)[:10]
+    return jsonify(records)
 
 
 @app.route("/sms_history")
 def sms_history():
     """Last 10 GSM / SMS events."""
-    return jsonify(_serialise(mongo_logger.get_sms_history(10)))
+    return jsonify([])
 
 
 # ── Control endpoint ──────────────────────────────────────────────────────────

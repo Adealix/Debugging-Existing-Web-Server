@@ -1,12 +1,3 @@
-"""
-helpers.py — utility functions for Crayfish IoT System
--------------------------------------------------------
-Imports the module-level singleton from db.py — never creates its own instance.
-apply_serial_update() fires insert_sensor(), insert_actuator(), and
-(on gsm_status change) insert_sms_event() on every serial tick.
-MongoDB writes happen OUTSIDE state_lock to avoid blocking the serial thread.
-"""
-
 import socket
 import time
 from datetime import datetime, time as dt_time
@@ -29,13 +20,8 @@ except ImportError:
 import state as S
 from state import detection_lock, state_lock
 from config import ROBOFLOW_API_URL, ROBOFLOW_MODEL_ID
-# ── use the shared singleton, never construct a new MongoLogger here ──────────
 from db import mongo_logger
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Network / time helpers
-# ──────────────────────────────────────────────────────────────────────────────
 
 def get_local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -74,10 +60,6 @@ def is_within_time_window(start_time, end_time, now=None):
     return now >= start or now <= end
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Math helpers
-# ──────────────────────────────────────────────────────────────────────────────
-
 def clamp(value, low, high):
     return max(low, min(high, value))
 
@@ -94,10 +76,6 @@ def compute_health(ph, temp):
         score -= 20
     return int(clamp(score, 0, 100))
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Serial parsing
-# ──────────────────────────────────────────────────────────────────────────────
 
 def parse_serial_line(line):
     parsed = {
@@ -145,10 +123,6 @@ def parse_serial_line(line):
     return parsed
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# In-memory event log (dashboard feed only — NOT persisted)
-# ──────────────────────────────────────────────────────────────────────────────
-
 def log_event(kind, title, detail):
     event = {
         "time":   now_hms(),
@@ -159,10 +133,6 @@ def log_event(kind, title, detail):
     with state_lock:
         S.events.appendleft(event)
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Detection state helpers
-# ──────────────────────────────────────────────────────────────────────────────
 
 def get_detection_snapshot():
     with detection_lock:
@@ -185,30 +155,17 @@ def set_detection_state(**kwargs):
                 S.detection_state[key] = value
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Core state update — saves to MongoDB on every serial tick
-# ──────────────────────────────────────────────────────────────────────────────
-
 def apply_serial_update(parsed, raw_line):
-    """
-    1. Update shared in-memory state (under state_lock).
-    2. After releasing the lock, persist to MongoDB:
-         • insert_sensor()    → sensor_history   (FIFO 10)
-         • insert_actuator()  → actuator_history (FIFO 10)
-         • insert_sms_event() → sms_events       (FIFO 10, only on gsm change)
-    """
     with state_lock:
         S.state["serial_raw"] = raw_line
         S.state["updated_at"] = time.time()
         changed = False
 
-        # analog sensors
         for field in ("ph", "temp", "turbidity", "light_lux", "distance_cm"):
             if parsed.get(field) is not None:
                 S.state[field] = parsed[field]
                 changed = True
 
-        # digital actuators — capture previous gsm before overwrite
         prev_gsm = S.state.get("gsm_status")
         for field in ("pump", "peltier", "air_pump", "filter_pump",
                       "rgb", "gsm_status", "mode", "rgb_color", "rgb_brightness"):
@@ -221,7 +178,6 @@ def apply_serial_update(parsed, raw_line):
         if not changed:
             return
 
-        # build snapshots while still holding the lock (consistent read)
         tick_time = now_hms()
         tick_ts   = time.time()
 
@@ -249,23 +205,19 @@ def apply_serial_update(parsed, raw_line):
             "mode":           S.state["mode"],
         }
 
-        new_gsm    = S.state.get("gsm_status")
-        gsm_raw    = raw_line
+        new_gsm     = S.state.get("gsm_status")
+        gsm_raw     = raw_line
         gsm_changed = new_gsm and new_gsm != prev_gsm
 
-        # update in-memory history deque (offline fallback)
         S.history.append({**sensor_snapshot, **actuator_snapshot, "gsm_status": new_gsm})
 
-    # ── MongoDB writes OUTSIDE state_lock ────────────────────────────────────
-    mongo_logger.insert_sensor(sensor_snapshot)
-    mongo_logger.insert_actuator(actuator_snapshot)
+    from mqtt_monitor import enqueue_sensor_write, enqueue_actuator_write, enqueue_sms_write
+
+    enqueue_sensor_write(sensor_snapshot)
+    enqueue_actuator_write(actuator_snapshot)
     if gsm_changed:
-        mongo_logger.insert_sms_event(status=new_gsm, detail=gsm_raw)
+        enqueue_sms_write(status=new_gsm, detail=gsm_raw)
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Snapshot for /latest endpoint
-# ──────────────────────────────────────────────────────────────────────────────
 
 def latest_snapshot():
     detection = get_detection_snapshot()
@@ -308,42 +260,13 @@ def latest_snapshot():
         in_memory_history = list(S.history)
         events = list(S.events)
 
-    # fetch history from MongoDB; fall back to in-memory deque if unavailable
-    if mongo_logger.sensor_col is not None:
-        try:
-            def _clean(records):
-                out = []
-                for rec in records:
-                    rec = dict(rec)
-                    rec["_id"] = str(rec["_id"])
-                    if isinstance(rec.get("timestamp"), datetime):
-                        rec["timestamp"] = rec["timestamp"].isoformat()
-                    out.append(rec)
-                return out
-
-            sensor_history   = _clean(mongo_logger.get_sensor_history(10))
-            actuator_history = _clean(mongo_logger.get_actuator_history(10))
-            sms_history      = _clean(mongo_logger.get_sms_history(10))
-        except Exception:
-            sensor_history   = in_memory_history
-            actuator_history = []
-            sms_history      = []
-    else:
-        sensor_history   = in_memory_history
-        actuator_history = []
-        sms_history      = []
-
-    snapshot["sensor_history"]   = sensor_history
-    snapshot["actuator_history"] = actuator_history
-    snapshot["sms_history"]      = sms_history
-    snapshot["history"]          = sensor_history  # legacy key
+    snapshot["sensor_history"]   = in_memory_history
+    snapshot["actuator_history"] = in_memory_history
+    snapshot["sms_history"]      = []
+    snapshot["history"]          = in_memory_history
     snapshot["events"]           = events
     return snapshot
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Frame / detection helpers (unchanged from original)
-# ──────────────────────────────────────────────────────────────────────────────
 
 def downsample_frame(frame, width, height):
     if cv2 is None:
@@ -490,28 +413,25 @@ def run_roboflow_detection(frame_bgr):
 
 
 def run_yolo_detection(frame_bgr):
-    """Run YOLOv8 detection using best.pt model"""
     try:
         from ultralytics import YOLO
     except ImportError:
         raise RuntimeError("ultralytics is not installed")
-    
+
     if cv2 is None:
         raise RuntimeError("opencv-python is not installed")
-    
+
     from config import DETECTION_FRAME_WIDTH, DETECTION_FRAME_HEIGHT, ROBOFLOW_CONFIDENCE
-    
-    # Load model (cached after first load)
+
     if not hasattr(run_yolo_detection, 'model'):
         run_yolo_detection.model = YOLO('best.pt')
-    
+
     model = run_yolo_detection.model
     orig_h, orig_w = frame_bgr.shape[:2]
     downsampled = downsample_frame(frame_bgr, DETECTION_FRAME_WIDTH, DETECTION_FRAME_HEIGHT)
-    
-    # Run inference
+
     results = model(downsampled, conf=ROBOFLOW_CONFIDENCE)
-    
+
     detections = []
     for r in results:
         for box in r.boxes:
@@ -525,7 +445,7 @@ def run_yolo_detection(frame_bgr):
                 "confidence": round(score, 4),
                 "label": "crayfish"
             })
-    
+
     return scale_detections(
         detections, orig_w, orig_h,
         DETECTION_FRAME_WIDTH, DETECTION_FRAME_HEIGHT,

@@ -28,6 +28,7 @@ const char* MQTT_CLIENT   = "esp32_crayfish";
 #define TOPIC_LUX             "crayfish/lux"
 #define TOPIC_TEMP            "crayfish/temperature"
 #define TOPIC_ALERT           "crayfish/alert"
+#define TOPIC_SENSORS_BATCH   "crayfish/sensors/batch"
 
 
 
@@ -540,7 +541,11 @@ void mqttPublish(const char* topic, const char* msg) {
 // ================================
 float getAvgPHRaw() {
   int buf[SAMPLES];
-  for (int i = 0; i < SAMPLES; i++) { buf[i] = analogRead(PH_PIN); delay(10); }
+  for (int i = 0; i < SAMPLES; i++) {
+    buf[i] = analogRead(PH_PIN);
+    if (i % 5 == 0) mqtt.loop();   // keep MQTT alive during blocking reads
+    delay(10);
+  }
   for (int i = 0; i < SAMPLES - 1; i++)
     for (int j = i + 1; j < SAMPLES; j++)
       if (buf[i] > buf[j]) { int t = buf[i]; buf[i] = buf[j]; buf[j] = t; }
@@ -1078,7 +1083,12 @@ void loop() {
   }
 
   if (ctrlPump.mode == AUTO) {
-    setPump(turbidity > TURBIDITY_THRESHOLD);
+    bool shouldPump = turbidity > TURBIDITY_THRESHOLD;
+    static bool lastPumpState = false;
+    if (shouldPump != lastPumpState) {
+      setPump(shouldPump);
+      lastPumpState = shouldPump;
+    }
   }
 
   // --------------------------------------------------
@@ -1151,5 +1161,24 @@ void loop() {
 
   Serial.println("=====================================");
 
-  delay(1000);
+  // --------------------------------------------------
+  // Batch publish all sensor readings in ONE MQTT message
+  // (reduces 10 individual publishes to 1 — much faster)
+  // --------------------------------------------------
+  String batch = "{\"ph\":" + String(pH, 2)
+    + ",\"temp\":" + String(temp, 2)
+    + ",\"turbidity\":" + String(turbidity)
+    + ",\"lux\":" + String(lux, 2)
+    + ",\"distance\":" + String(distance, 2)
+    + "}";
+  mqttPublish(TOPIC_SENSORS_BATCH, batch.c_str());
+
+  Serial.println("=====================================");
+
+  // Non-blocking wait: service MQTT during the 1s interval
+  unsigned long waitStart = millis();
+  while (millis() - waitStart < 1000) {
+    mqtt.loop();
+    delay(10);
+  }
 }

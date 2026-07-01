@@ -502,7 +502,7 @@ activatePage(pageNames.includes(startPage) ? startPage : 'Dashboard');
 greetByTime();
 tickClock();
 refreshData();
-setInterval(refreshData, 1000);  // Poll every 1 second for fast button feedback
+setInterval(refreshData, 2000);  // Poll every 2 seconds (was 1s — reduces server load 50%)
 setInterval(tickClock,   1000);
 
 

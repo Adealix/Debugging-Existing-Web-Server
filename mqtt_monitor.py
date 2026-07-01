@@ -110,6 +110,22 @@ def on_message(client, userdata, msg):
                 S.state["gsm_status"] = value
             elif topic == "crayfish/alert":
                 log_event("alert", "Crayfish Alert", value)
+            elif topic == "crayfish/sensors/batch":
+                import json as _json
+                try:
+                    batch = _json.loads(value)
+                    if "ph" in batch:
+                        S.state["ph"] = float(batch["ph"])
+                    if "temp" in batch:
+                        S.state["temp"] = float(batch["temp"])
+                    if "turbidity" in batch:
+                        S.state["turbidity"] = float(batch["turbidity"])
+                    if "lux" in batch:
+                        S.state["light_lux"] = float(batch["lux"])
+                    if "distance" in batch:
+                        S.state["distance_cm"] = float(batch["distance"])
+                except Exception:
+                    pass
 
             S.state["health"]           = compute_health(S.state["ph"], S.state["temp"])
             S.state["updated_at"]       = time.time()
