@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Crayfish Maranan Page</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+   <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="brand">
+      <div class="mark">◉</div>
+      <div><h1>Crayfish IoT Dashboard</h1><p>Raspberry Pi live server</p></div>
+    </div>
+    <div class="tabs">
+       <a class="active" href="/">Dashboard</a>
+      <a href="/maranan">Maranan</a>
+      <a href="/calungsod">Calungsod</a>
+      <a href="/canta">Canta</a>
+      <a href="/delrosario">Del Rosario</a>
+      <a href="/garcia">Garcia</a>
+      <a href="/famini">Famini</a>
+    </div>
+    <div class="tools">
+      <div class="icon-btn" title="Notifications">◍</div>
+      <div class="avatar"  title="Operator">RP</div>
+    </div>
+  </div>
+<div class="wrap">
+<div class="shell">
+  <div class="topbar">
+    <div class="brand"><div class="mark">⚗</div><div><h1>Maranan Control</h1><p>pH, Turbidity, Temperature</p></div></div>
+    <div class="tools" style="gap:8px;">
+      <button class="btn-mode btn-mode-auto active" id="btnModeAuto" onclick="setMode('AUTO')">AUTO</button>
+      <button class="btn-mode btn-mode-manual" id="btnModeManual" onclick="setMode('MANUAL')">MANUAL</button>
+      <a class="icon-btn" href="/" title="Back">◀</a>
+    </div>
+  </div>
+  <div class="hero" id="top">
+    <div><h2>Maranan Overview</h2><div class="sub">pH, Turbidity, Temperature with Air Pump, Filter Pump, and Peltier.</div></div>
+    <div class="status-pill"><span class="status-dot"></span><span id="connStatus">Connection: Offline</span><span style="opacity:.4">•</span><span id="clock">--:--:--</span></div>
+  </div>
+  <div class="stats" style="grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; padding:0 20px 16px;">
+    <div class="stat"><div class="stat-top"><div class="stat-icon">⚗</div><div class="seg">pH</div></div><div class="value" id="val-ph">--</div><div class="label">Water quality</div></div>
+    <div class="stat"><div class="stat-top"><div class="stat-icon">💨</div><div class="seg">Air Pump</div></div><div class="value" id="val-air">--</div><div class="label">Air pump state</div></div>
+    <div class="stat"><div class="stat-top"><div class="stat-icon">🌫️</div><div class="seg">Turbidity</div></div><div class="value" id="val-turb">--</div><div class="label">Water clarity</div></div>
+    <div class="stat"><div class="stat-top"><div class="stat-icon">🚿</div><div class="seg">Filter Pump</div></div><div class="value" id="val-pump">--</div><div class="label">Filter pump state</div></div>
+    <div class="stat"><div class="stat-top"><div class="stat-icon">🌡️</div><div class="seg">Temperature</div></div><div class="value" id="val-temp">--</div><div class="label">Water temperature</div></div>
+    <div class="stat"><div class="stat-top"><div class="stat-icon">❄️</div><div class="seg">Peltier</div></div><div class="value" id="val-pelt">--</div><div class="label">Peltier state</div></div>
+  </div>
+  <div class="panel controls-panel">
+    <div class="panel-hd"><div><div class="panel-title">Manual Controls</div><div class="panel-sub">Switch mode and operate actuators.</div></div><div class="badge badge-purple" id="modeBadge">AUTO</div></div>
+    <div class="panel-body">
+      <div class="manual-zone locked" id="manualZone">
+        <div class="ctrl-label">Air Pump</div>
+        <div class="act-grid">
+          <button class="btn btn-on" id="btn-air_pump-ON" onclick="setManualRelay('air_pump','ON')">💨 ON</button>
+          <button class="btn btn-off" id="btn-air_pump-OFF" onclick="setManualRelay('air_pump','OFF')">OFF</button>
+        </div>
+        <div class="ctrl-label">Filter Pump</div>
+        <div class="act-grid">
+          <button class="btn btn-on" id="btn-pump-ON" onclick="setManualRelay('pump','ON')">🚿 ON</button>
+          <button class="btn btn-off" id="btn-pump-OFF" onclick="setManualRelay('pump','OFF')">OFF</button>
+        </div>
+        <div class="ctrl-label">Peltier</div>
+        <div class="act-grid">
+          <button class="btn btn-on" id="btn-peltier-ON" onclick="setManualRelay('peltier','ON')">❄️ ON</button>
+          <button class="btn btn-off" id="btn-peltier-OFF" onclick="setManualRelay('peltier','OFF')">OFF</button>
+        </div>
+      </div>
+      <div class="mini-row" style="margin-top:16px;"><div class="mini"><div class="k">Mode</div><div class="v" id="modeDisplay">AUTO</div></div></div>
+    </div>
+  </div>
+</div>
+</div>
+<script>
+let currentMode = 'AUTO';
+function fmtValue(v, suffix='') { return (v===null||v===undefined||v==='') ? '--' : `${Number(v).toFixed(2)}${suffix}`; }
+function sendControl(payload) {
+  return fetch('/api/control', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)})
+    .then(r=>r.json()).then(d=>{ if(d.state) applyState(d.state); }).catch(console.warn);
+}
+function applyModeUI(mode) {
+  currentMode = mode;
+  const disabled = mode === 'AUTO';
+  document.querySelectorAll('#manualZone button').forEach(btn => btn.disabled = disabled);
+  document.getElementById('btnModeAuto').classList.toggle('active', mode==='AUTO');
+  document.getElementById('btnModeManual').classList.toggle('active', mode==='MANUAL');
+  document.getElementById('manualZone').classList.toggle('locked', mode==='AUTO');
+  document.getElementById('modeBadge').innerText = mode;
+  document.getElementById('modeBadge').className = mode==='AUTO' ? 'badge badge-purple' : 'badge badge-amber';
+  document.getElementById('modeDisplay').innerText = mode;
+}
+function setMode(m) { applyModeUI(m); sendControl({mode:m}); }
+function setManualRelay(f,v) {
+  if (currentMode==='AUTO') return;
+  const onBtn=document.getElementById(`btn-${f}-ON`);
+  const offBtn=document.getElementById(`btn-${f}-OFF`);
+  if (onBtn && offBtn) {
+    const isOn = v==='ON';
+    onBtn.classList.toggle('is-active', isOn);
+    onBtn.classList.toggle('is-inactive', !isOn);
+    offBtn.classList.toggle('is-active', !isOn);
+    offBtn.classList.toggle('is-inactive', isOn);
+  }
+  sendControl({[f]:v});
+}
+function applyState(data) {
+  document.getElementById('val-ph').innerText = fmtValue(data.ph);
+  document.getElementById('val-air').innerText = data.air_pump||'--';
+  document.getElementById('val-turb').innerText = fmtValue(data.turbidity,' NTU');
+  document.getElementById('val-pump').innerText = data.pump||'--';
+  document.getElementById('val-temp').innerText = fmtValue(data.temp,'°C');
+  document.getElementById('val-pelt').innerText = data.peltier||'--';
+  document.getElementById('connStatus').innerText = `Connection: ${data.connection_source||'Offline'}`;
+  document.getElementById('clock').innerText = new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const serverMode=(data.mode||'AUTO').toUpperCase();
+  if (serverMode!==currentMode) applyModeUI(serverMode);
+}
+async function refresh() {
+  try { const res = await fetch('/api/data'); const data = await res.json(); applyState(data); } catch(e) { console.warn(e); }
+}
+applyModeUI('AUTO'); refresh(); setInterval(refresh,5000);
+</script>
+</body>
+</html>

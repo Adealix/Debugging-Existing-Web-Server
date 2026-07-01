@@ -1,0 +1,9 @@
+picamera2
+ultralytics
+supervision
+pyserial
+inference
+paho-mqtt
+flask
+python-dotenv
+pymongo

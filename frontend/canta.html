@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Crayfish Canta Page</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+   <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="brand">
+      <div class="mark">◉</div>
+      <div><h1>Crayfish IoT Dashboard</h1><p>Raspberry Pi live server</p></div>
+    </div>
+    <div class="tabs">
+       <a class="active" href="/">Dashboard</a>
+      <a href="/maranan">Maranan</a>
+      <a href="/calungsod">Calungsod</a>
+      <a href="/canta">Canta</a>
+      <a href="/delrosario">Del Rosario</a>
+      <a href="/garcia">Garcia</a>
+      <a href="/famini">Famini</a>
+    </div>
+    <div class="tools">
+      <div class="icon-btn" title="Notifications">◍</div>
+      <div class="avatar"  title="Operator">RP</div>
+    </div>
+  </div>
+<div class="wrap"><div class="shell">
+  <div class="topbar">
+    <div class="brand"><div class="mark">🔧</div><div><h1>Canta Control</h1><p>Light, Temperature, Camera</p></div></div>
+    <div class="tools" style="gap:8px;">
+      <button class="btn-mode btn-mode-auto active" id="btnModeAuto" onclick="setMode('AUTO')">AUTO</button>
+      <button class="btn-mode btn-mode-manual" id="btnModeManual" onclick="setMode('MANUAL')">MANUAL</button>
+      <a class="icon-btn" href="/" title="Back">◀</a>
+    </div>
+  </div>
+  <div class="hero" id="top">
+    <div><h2>Canta Overview</h2><div class="sub">BH1750, Temperature, Camera with RGB Strip, Peltier, GSM.</div></div>
+    <div class="status-pill"><span class="status-dot"></span><span id="connStatus">Connection: Offline</span><span style="opacity:.4">•</span><span id="clock">--:--:--</span></div>
+  </div>
+  <div class="stats" style="grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; padding:0 20px 16px;">
+    <div class="stat"><div class="stat-top"><div class="stat-icon">☀️</div><div class="seg">BH1750</div></div><div class="value" id="val-light">--</div><div class="label">Ambient light</div></div>
+    <div class="stat"><div class="stat-top"><div class="stat-icon">🌈</div><div class="seg">RGB Strip</div></div><div class="value" id="val-rgb">--</div><div class="label">RGB status</div></div>
+    <div class="stat"><div class="stat-top"><div class="stat-icon">🌡️</div><div class="seg">Temperature</div></div><div class="value" id="val-temp">--</div><div class="label">Water temperature</div></div>
+    <div class="stat"><div class="stat-top"><div class="stat-icon">❄️</div><div class="seg">Peltier</div></div><div class="value" id="val-pelt">--</div><div class="label">Peltier state</div></div>
+    <div class="stat"><div class="stat-top"><div class="stat-icon">📷</div><div class="seg">Camera</div></div><div class="value" id="val-cam">--</div><div class="label">Detection count</div>
+        <!-- CAMERA -->
+        <div class="panel camera-panel section-anchor" id="camera">
+          <div class="status-head">
+            <div><div class="panel-title">Live Camera</div><div class="panel-sub">Raspberry Pi CSI video stream.</div></div>
+            <div class="badge badge-red" id="cameraBadge">OFFLINE</div>
+          </div>
+          <div class="camera-frame"><img src="/camera/feed" alt="Live camera feed" loading="lazy" /></div>
+          <div class="small-note" id="cameraText">Waiting for camera stream…</div>
+        </div>
+  </div>
+    <div class="stat"><div class="stat-top"><div class="stat-icon">📱</div><div class="seg">GSM</div></div><div class="value" id="val-gsm">--</div><div class="label">GSM module</div></div>
+  </div>
+  <div class="panel controls-panel">
+    <div class="panel-hd"><div><div class="panel-title">Manual Controls</div><div class="panel-sub">Switch mode and operate actuators.</div></div><div class="badge badge-purple" id="modeBadge">AUTO</div></div>
+    <div class="panel-body">
+      <div class="manual-zone locked" id="manualZone">
+        <div class="ctrl-label">RGB Strip</div>
+        <div class="act-grid">
+          <button class="btn btn-on" id="btn-rgb-ON" onclick="setManualRelay('rgb','ON')">🌈 ON</button>
+          <button class="btn btn-off" id="btn-rgb-OFF" onclick="setManualRelay('rgb','OFF')">OFF</button>
+        </div>
+        <div class="colour-grid" id="colourGrid" style="margin-top:8px;">
+          <button class="btn-colour swatch-blue" onclick="setRgbColour('blue')" data-colour="blue">Blue</button>
+          <button class="btn-colour swatch-cyan" onclick="setRgbColour('cyan')" data-colour="cyan">Cyan</button>
+          <button class="btn-colour swatch-purple" onclick="setRgbColour('purple')" data-colour="purple">Purple</button>
+          <button class="btn-colour swatch-white" onclick="setRgbColour('white')" data-colour="white">White</button>
+        </div>
+        <div class="slider-row"><span style="font-size:11px;color:var(--muted);">Brightness</span><input id="rgbSlider" type="range" min="0" max="100" value="60" oninput="document.getElementById('brightnessVal').innerText=this.value+'%'" onchange="setRgbBrightness(this.value)" /><span class="slider-label" id="brightnessVal">60%</span></div>
+        <div class="ctrl-label" style="margin-top:12px;">Peltier</div>
+        <div class="act-grid">
+          <button class="btn btn-on" id="btn-peltier-ON" onclick="setManualRelay('peltier','ON')">❄️ ON</button>
+          <button class="btn btn-off" id="btn-peltier-OFF" onclick="setManualRelay('peltier','OFF')">OFF</button>
+        </div>
+        <div class="ctrl-label">GSM</div>
+        <div class="act-grid">
+          <button class="btn btn-danger btn-full" onclick="sendGsmAlert()">📲 Test SMS</button>
+        </div>
+      </div>
+      <div class="mini-row" style="margin-top:16px;"><div class="mini"><div class="k">Mode</div><div class="v" id="modeDisplay">AUTO</div></div></div>
+    </div>
+  </div>
+</div></div>
+<script>
+let currentMode = 'AUTO';
+function fmtValue(v, suffix='') { return (v===null||v===undefined||v==='') ? '--' : `${Number(v).toFixed(2)}${suffix}`; }
+function sendControl(payload) { return fetch('/api/control', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}).then(r=>r.json()).then(d=>{ if(d.state) applyState(d.state); }).catch(console.warn); }
+function applyModeUI(mode) {
+  currentMode = mode;
+  const disabled = mode === 'AUTO';
+  document.querySelectorAll('#manualZone button').forEach(btn => btn.disabled = disabled);
+  document.getElementById('btnModeAuto').classList.toggle('active', mode==='AUTO');
+  document.getElementById('btnModeManual').classList.toggle('active', mode==='MANUAL');
+  document.getElementById('manualZone').classList.toggle('locked', mode==='AUTO');
+  document.getElementById('modeBadge').innerText = mode;
+  document.getElementById('modeBadge').className = mode==='AUTO' ? 'badge badge-purple' : 'badge badge-amber';
+  document.getElementById('modeDisplay').innerText = mode;
+}
+function setMode(m) { applyModeUI(m); sendControl({mode:m}); }
+function setManualRelay(f,v) { if (currentMode==='AUTO') return; const onBtn=document.getElementById(`btn-${f}-ON`); const offBtn=document.getElementById(`btn-${f}-OFF`); if (onBtn && offBtn) { const isOn = v==='ON'; onBtn.classList.toggle('is-active', isOn); onBtn.classList.toggle('is-inactive', !isOn); offBtn.classList.toggle('is-active', !isOn); offBtn.classList.toggle('is-inactive', isOn); } sendControl({[f]:v}); }
+function setRgbColour(c) { const map={blue:[0,0,255],cyan:[135,206,235],purple:[128,0,128],white:[255,244,229]}; document.querySelectorAll('#colourGrid .btn-colour').forEach(b=>b.classList.toggle('active', b.dataset.colour===c)); const rgb=map[c]; if (rgb) sendControl({rgb_color:c, rgb_rgb:`${rgb[0]},${rgb[1]},${rgb[2]}`}); }
+function setRgbBrightness(l) { sendControl({rgb_brightness:Number(l)}); }
+function sendGsmAlert() { sendControl({gsm_alert:'TEST_ALERT'}); }
+function applyState(data) {
+  document.getElementById('val-light').innerText = fmtValue(data.light_lux,' lux');
+  document.getElementById('val-rgb').innerText = data.rgb_color ? `${data.rgb_color.toUpperCase()} ${data.rgb_brightness||0}%` : (data.rgb||'--');
+  document.getElementById('val-temp').innerText = fmtValue(data.temp,'°C');
+  document.getElementById('val-pelt').innerText = data.peltier||'--';
+  document.getElementById('val-cam').innerText = data.detection?.count||'--';
+  document.getElementById('val-gsm').innerText = data.gsm_status||'--';
+  document.getElementById('connStatus').innerText = `Connection: ${data.connection_source||'Offline'}`;
+  document.getElementById('clock').innerText = new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  if (data.rgb_color) { document.querySelectorAll('#colourGrid .btn-colour').forEach(b=> b.classList.toggle('active', b.dataset.colour===data.rgb_color)); }
+  if (data.rgb_brightness!==undefined) { const slider=document.getElementById('rgbSlider'); if (document.activeElement!==slider) { slider.value=data.rgb_brightness; document.getElementById('brightnessVal').innerText=`${data.rgb_brightness}%`; } }
+  const serverMode=(data.mode||'AUTO').toUpperCase();
+  if (serverMode!==currentMode) applyModeUI(serverMode);
+}
+async function refresh() { try { const res = await fetch('/api/data'); const data = await res.json(); applyState(data); } catch(e) { console.warn(e); } }
+applyModeUI('AUTO'); refresh(); setInterval(refresh,5000);
+</script>
+</body>
+</html>

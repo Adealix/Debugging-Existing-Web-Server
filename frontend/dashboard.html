@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Crayfish IoT Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="wrap">
+<div class="shell">
+
+
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="brand">
+      <div class="mark">◉</div>
+      <div><h1>Crayfish IoT Dashboard</h1><p>Raspberry Pi live server</p></div>
+    </div>
+    <div class="tabs">
+      <a class="active" href="/">Dashboard</a>
+      <a href="/maranan">Maranan</a>
+      <a href="/calungsod">Calungsod</a>
+      <a href="/canta">Canta</a>
+      <a href="/delrosario">Del Rosario</a>
+      <a href="/garcia">Garcia</a>
+      <a href="/famini">Famini</a>
+    </div>
+    <div class="tools">
+      <div class="icon-btn" title="Notifications">◍</div>
+      <div class="avatar"  title="Operator">RP</div>
+    </div>
+  </div>
+
+
+  <!-- HERO -->
+  <div class="hero" id="top">
+    <div>
+      <h2 id="greeting">Good day, Operator!</h2>
+      <div class="sub">Live monitoring of sensors, actuators, and feed system.</div>
+    </div>
+    <div class="status-pill">
+      <span class="status-dot"></span>
+      <span id="connStatus">Connection: Offline</span>
+      <span style="opacity:.4">•</span>
+      <span id="clock">--:--:--</span>
+    </div>
+  </div>
+
+
+  <!-- PAGE PANEL (non-Dashboard views) -->
+  <div class="panel section-anchor" id="pageSection" style="display:none;">
+    <div class="panel-hd">
+      <div>
+        <div class="panel-title" id="pageSectionTitle">Page</div>
+        <div class="panel-sub"  id="pageSectionSub">Six custom sensors and actuators.</div>
+      </div>
+      <div class="seg" id="pageSectionFlag">Custom view</div>
+    </div>
+    <div class="panel-body"><div class="page-grid" id="pageGrid"></div></div>
+  </div>
+
+
+  <!-- SENSOR GRID -->
+  <div class="stats section-anchor" id="sensors">
+    <div class="stat">
+      <div class="stat-top"><div class="stat-icon">🌞</div><div class="seg">Light</div></div>
+      <div class="value" id="luxValue">--</div>
+      <div class="label">BH1750 ambient lux</div><div class="tag">● Lighting</div>
+    </div>
+    <div class="stat">
+      <div class="stat-top"><div class="stat-icon">⚗</div><div class="seg">pH</div></div>
+      <div class="value" id="phValue">--</div>
+      <div class="label">Water quality</div><div class="tag">● Safe range 6.5–8.0</div>
+    </div>
+    <div class="stat">
+      <div class="stat-top"><div class="stat-icon">🌫️</div><div class="seg">Turbidity</div></div>
+      <div class="value" id="turbidityValue">--</div>
+      <div class="label">Water clarity</div><div class="tag">● Filtration</div>
+    </div>
+    <div class="stat">
+      <div class="stat-top"><div class="stat-icon">🌡️</div><div class="seg">Temp</div></div>
+      <div class="value" id="tempValue">--</div>
+      <div class="label">Water temperature</div><div class="tag">● Optimal 22–25°C</div>
+    </div>
+    <div class="stat">
+      <div class="stat-top"><div class="stat-icon">📷</div><div class="seg">Camera</div></div>
+      <div class="value" id="cameraValue">--</div>
+      <div class="label">Vision detection</div><div class="tag">● AI feed</div>
+    </div>
+    <div class="stat">
+      <div class="stat-top"><div class="stat-icon">📡</div><div class="seg">Presence</div></div>
+      <div class="value" id="distanceValue">--</div>
+      <div class="label">Ultrasonic distance</div><div class="tag">● Shelter occupancy</div>
+    </div>
+  </div>
+
+
+  <!-- MAIN LAYOUT -->
+  <div class="layout" id="dashboardLayout">
+
+
+    <!-- SENSOR TREND -->
+    <div class="panel">
+      <div class="panel-hd">
+        <div><div class="panel-title">Sensor Trend</div><div class="panel-sub">Live pH, temperature and turbidity history.</div></div>
+        <div class="seg">Live ▾</div>
+      </div>
+      <div class="panel-body">
+        <div class="chart-wrap"><canvas id="sensorChart"></canvas></div>
+        <div class="mini-row">
+          <div class="mini"><div class="k">Last updated</div><div class="v" id="updatedAt">--</div></div>
+          <div class="mini"><div class="k">System health</div><div class="v" id="healthLabel">--%</div></div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- SIDE COLUMN -->
+    <div class="side">
+
+
+      <!-- CAMERA -->
+      <div class="panel camera-panel section-anchor" id="camera">
+        <div class="status-head">
+          <div><div class="panel-title">Live Camera</div><div class="panel-sub">Raspberry Pi CSI video stream.</div></div>
+          <div class="badge badge-red" id="cameraBadge">OFFLINE</div>
+        </div>
+        <div class="camera-frame"><img src="/camera/feed" alt="Live camera feed" loading="lazy" /></div>
+        <div class="small-note" id="cameraText">Waiting for camera stream…</div>
+      </div>
+
+
+      <!-- ════════════════════════════════════════
+           ACTUATOR CONTROL PANEL
+      ════════════════════════════════════════ -->
+      <div class="panel controls-panel section-anchor" id="controls">
+
+
+        <!-- Header -->
+        <div class="status-head" style="margin-bottom:14px;">
+          <div>
+            <div class="panel-title">Actuator Control</div>
+            <div class="panel-sub">Select a mode, then operate actuators.</div>
+          </div>
+          <div class="badge badge-purple" id="modeBadge">AUTO</div>
+        </div>
+
+
+        <!-- Mode selector -->
+        <div class="mode-strip">
+          <button class="btn-mode btn-mode-auto active" id="btnModeAuto"
+                  onclick="setMode('AUTO')" title="Sensors drive all actuators automatically">
+            ⚙️ Automatic
+          </button>
+          <button class="btn-mode btn-mode-manual" id="btnModeManual"
+                  onclick="setMode('MANUAL')" title="Manually control each actuator">
+            🕹️ Manual
+          </button>
+        </div>
+
+
+        <!-- Manual controls (locked when AUTO) -->
+        <div class="manual-zone locked" id="manualZone">
+
+
+          <!-- Pumps & Peltier -->
+          <div class="ctrl-label">Pumps &amp; Peltier</div>
+          <div class="act-grid">
+<button class="btn btn-on"
+       id="btn-pump-ON"
+       onclick="setManualRelay('pump','ON')">
+   🚿 Filter Pump ON
+</button>
+             <button class="btn btn-off"
+       id="btn-pump-OFF"
+       onclick="setManualRelay('pump','OFF')">
+   Filter Pump OFF
+            </button>
+            <button class="btn btn-on"  id="btn-air_pump-ON"    onclick="setManualRelay('air_pump','ON')">💨 Air Pump ON</button>
+            <button class="btn btn-off" id="btn-air_pump-OFF"   onclick="setManualRelay('air_pump','OFF')">Air Pump OFF</button>
+            <button class="btn btn-on"  id="btn-peltier-ON"     onclick="setManualRelay('peltier','ON')">❄️ Peltier ON</button>
+            <button class="btn btn-off" id="btn-peltier-OFF"    onclick="setManualRelay('peltier','OFF')">Peltier OFF</button>
+          </div>
+
+
+          <!-- RGB Strip -->
+          <div class="ctrl-label">RGB Strip</div>
+          <div class="act-grid">
+            <button class="btn btn-on"  id="btn-rgb-ON"  onclick="setManualRelay('rgb','ON')">🌈 RGB ON</button>
+            <button class="btn btn-off" id="btn-rgb-OFF" onclick="setManualRelay('rgb','OFF')">RGB OFF</button>
+          </div>
+
+
+          <div class="colour-grid" style="margin-top:10px;" id="colourGrid">
+            <button class="btn-colour swatch-blue"   onclick="setRgbColour('blue')"   data-colour="blue">Blue</button>
+            <button class="btn-colour swatch-cyan"   onclick="setRgbColour('cyan')"   data-colour="cyan">Cyan</button>
+            <button class="btn-colour swatch-purple" onclick="setRgbColour('purple')" data-colour="purple">Purple</button>
+            <button class="btn-colour swatch-white"  onclick="setRgbColour('white')"  data-colour="white">White</button>
+          </div>
+
+
+          <div class="slider-row">
+            <span style="font-size:11px;color:var(--muted);">Brightness</span>
+            <input id="rgbSlider" type="range" min="0" max="100" value="60"
+                   oninput="document.getElementById('brightnessVal').innerText=this.value+'%'"
+                   onchange="setRgbBrightness(this.value)" />
+            <span class="slider-label" id="brightnessVal">60%</span>
+          </div>
+
+
+          <div class="mini-row" style="margin-top:10px;">
+            <div class="mini"><div class="k">RGB status</div><div class="v" id="rgbValue">--</div></div>
+            <div class="mini"><div class="k">Colour</div><div class="v" id="rgbColor">--</div></div>
+          </div>
+
+
+          <!-- Stepper Motor -->
+          <div class="ctrl-label">Stepper Motor</div>
+          <div class="stepper-row">
+            <button class="btn btn-warn" onclick="controlStepper('CW',4)">◀ Stepper CW</button>
+            <button class="btn btn-warn" onclick="controlStepper('CCW',4)">Stepper CCW ▶</button>
+          </div>
+
+
+          <!-- GSM / SMS -->
+          <div class="ctrl-label">GSM Module</div>
+          <div class="gsm-row">
+            <button class="btn btn-danger btn-full" onclick="sendGsmAlert()">📲 Send Test SMS Alert</button>
+            <div class="mini" style="min-width:72px;text-align:center;">
+              <div class="k">Status</div><div class="v" id="gsmStatus">--</div>
+            </div>
+          </div>
+
+
+        </div><!-- /manual-zone -->
+
+
+        <!-- ESP32 raw serial -->
+        <div class="ctrl-label" style="margin-top:16px;">ESP32 Serial</div>
+        <div class="raw" id="rawLine">Waiting for ESP32 serial data…</div>
+
+
+      </div><!-- /controls-panel -->
+
+
+      <!-- HEALTH GAUGE -->
+      <div class="panel status-box">
+        <div class="status-head">
+          <div><div class="panel-title">System Health</div><div class="panel-sub">Connection and sensor performance.</div></div>
+          <div class="badge badge-purple">Live</div>
+        </div>
+        <div class="gauge-wrap">
+          <div class="gauge">
+            <div class="arc"></div>
+            <div class="gauge-center">
+              <div class="pct" id="healthPct">--%</div>
+              <div class="cap">Overall health</div>
+            </div>
+          </div>
+        </div>
+        <div class="meta">
+          <div class="item"><div class="t">USB Serial</div><div class="n" id="serialStatus">--</div></div>
+          <div class="item"><div class="t">MQTT</div><div class="n" id="mqttStatus">--</div></div>
+        </div>
+      </div>
+
+
+    </div><!-- /side -->
+  </div><!-- /layout -->
+
+
+  <!-- DATABASE HISTORY -->
+  <div class="db-section section-anchor" id="db-history">
+    <div class="db-section-header">
+      <div>
+        <h3>📦 Database History</h3>
+        <p>All records persisted to MongoDB — sensor readings, actuator states, and SMS/GSM events.</p>
+      </div>
+      <div class="tab-switcher">
+        <button class="active" onclick="switchDbTab('sensor')">🌡 Sensor</button>
+        <button onclick="switchDbTab('actuator')">⚙️ Actuator</button>
+        <button onclick="switchDbTab('sms')">📱 SMS</button>
+      </div>
+    </div>
+
+
+    <div class="db-charts-grid">
+      <div class="db-chart-card">
+        <div class="panel-hd"><div><div class="panel-title" style="font-size:14px;">pH &amp; Temperature</div><div class="panel-sub">Last 10 DB records</div></div><div class="seg" style="font-size:10px;">MongoDB</div></div>
+        <div class="panel-body"><div class="db-chart-mini"><canvas id="dbPhTempChart"></canvas></div></div>
+      </div>
+      <div class="db-chart-card">
+        <div class="panel-hd"><div><div class="panel-title" style="font-size:14px;">Turbidity &amp; Light</div><div class="panel-sub">Last 10 DB records</div></div><div class="seg" style="font-size:10px;">MongoDB</div></div>
+        <div class="panel-body"><div class="db-chart-mini"><canvas id="dbTurbLuxChart"></canvas></div></div>
+      </div>
+      <div class="db-chart-card">
+        <div class="panel-hd"><div><div class="panel-title" style="font-size:14px;">Health &amp; Distance</div><div class="panel-sub">Last 10 DB records</div></div><div class="seg" style="font-size:10px;">MongoDB</div></div>
+        <div class="panel-body"><div class="db-chart-mini"><canvas id="dbHealthDistChart"></canvas></div></div>
+      </div>
+    </div>
+
+
+    <div class="db-table-panel active" id="dbPanel-sensor">
+      <div class="db-table-card">
+        <div class="table-header"><div class="panel-title" style="font-size:14px;">🌡 Sensor History</div><div class="panel-sub">Last 10 analog readings from <code>sensor_history</code>.</div></div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Timestamp</th><th>pH</th><th>Temp (°C)</th><th>Turbidity (NTU)</th><th>Light (lux)</th><th>Distance (cm)</th><th>Health</th></tr></thead>
+            <tbody id="sensorHistoryBody"><tr><td colspan="7" style="color:#6b7280;padding:20px 16px;">Loading…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="table-footer" id="sensorHistoryFooter">FIFO cap: 10 · MongoDB sensor_history</div>
+      </div>
+    </div>
+
+
+    <div class="db-table-panel" id="dbPanel-actuator">
+      <div class="db-table-card">
+        <div class="table-header"><div class="panel-title" style="font-size:14px;">⚙️ Actuator History</div><div class="panel-sub">Last 10 actuator snapshots from <code>actuator_history</code>.</div></div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Timestamp</th><th>Mode</th><th>Pump</th><th>Air Pump</th><th>Filter Pump</th><th>Peltier</th><th>RGB</th><th>Colour</th><th>Brightness</th></tr></thead>
+            <tbody id="actuatorHistoryBody"><tr><td colspan="9" style="color:#6b7280;padding:20px 16px;">Loading…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="table-footer">FIFO cap: 10 · MongoDB actuator_history</div>
+      </div>
+    </div>
+
+
+    <div class="db-table-panel" id="dbPanel-sms">
+      <div class="db-table-card">
+        <div class="table-header"><div class="panel-title" style="font-size:14px;">📱 SMS / GSM Events</div><div class="panel-sub">Last 10 GSM events from <code>sms_events</code>.</div></div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Timestamp</th><th>Status</th><th>Detail</th></tr></thead>
+            <tbody id="smsHistoryBody"><tr><td colspan="3" style="color:#6b7280;padding:20px 16px;">Loading…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="table-footer">FIFO cap: 10 · MongoDB sms_events</div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- LIVE EVENTS -->
+  <div class="events section-anchor" id="logs">
+    <div class="events-head">
+      <div><div class="panel-title">Recent Activity</div><div class="panel-sub">Latest serial lines and control actions (in-memory).</div></div>
+      <div class="seg">Live log</div>
+    </div>
+    <table>
+      <thead><tr><th style="width:100px;">Time</th><th style="width:100px;">Type</th><th>Title</th><th>Details</th></tr></thead>
+      <tbody id="eventsBody"><tr><td colspan="4" style="color:#6b7280;">No activity yet.</td></tr></tbody>
+    </table>
+  </div>
+
+
+</div><!-- /shell -->
+</div><!-- /wrap -->
+
+
+<!-- MOBILE NAV -->
+<nav class="mobile-nav" aria-label="Main navigation">
+<ul>
+  <li><a href="#Dashboard"    class="active" onclick="activatePage('Dashboard');return false;"><span class="ico">⊞</span>Dashboard</a></li>
+  <li><a href="#Maranan"      onclick="activatePage('Maranan');return false;"><span class="ico">⚗</span>Maranan</a></li>
+  <li><a href="#Calungsod"    onclick="activatePage('Calungsod');return false;"><span class="ico">🌫️</span>Calungsod</a></li>
+  <li><a href="#Canta"        onclick="activatePage('Canta');return false;"><span class="ico">🔧</span>Canta</a></li>
+  <li><a href="#Del%20Rosario" onclick="activatePage('Del Rosario');return false;"><span class="ico">🏷️</span>Del Rosario</a></li>
+  <li><a href="#Garcia"       onclick="activatePage('Garcia');return false;"><span class="ico">💡</span>Garcia</a></li>
+</ul>
+</nav>
+<script src="/static/script.js"></script>
+</body>
+</html>
+
+
+
+
+
