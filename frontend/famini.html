@@ -202,7 +202,7 @@ function applyState(data) {
 }
 async function refresh() {
   try {
-    const res = await fetch('/api/data');
+    const res = await fetch('/api/live');
     const data = await res.json();
     applyState(data);
   } catch(e) { console.warn(e); }

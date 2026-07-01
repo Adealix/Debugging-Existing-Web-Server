@@ -26,13 +26,14 @@ class MongoLogger:
         self.sms_col      = None
         self.col = None
         self._write_count = 0  # throttle _prune to every N writes
+        self._failures = 0     # consecutive write failures; disable after 3
 
         if not uri:
             print("[MongoLogger] No URI provided — MongoDB disabled.")
             return
 
         try:
-            self.client = MongoClient(uri, serverSelectionTimeoutMS=6000)
+            self.client = MongoClient(uri, serverSelectionTimeoutMS=2000)
             self.client.admin.command("ping")
             self.db = self.client["crayfish_db"]
 
@@ -77,6 +78,13 @@ class MongoLogger:
         if self._write_count % 10 == 0:
             self._prune(col)
 
+    def _fail_or_disable(self, exc: Exception):
+        self._failures += 1
+        print(f"[MongoLogger] write error ({self._failures}/3): {exc}")
+        if self._failures >= 3:
+            print("[MongoLogger] Too many write failures — disabling MongoDB.")
+            self.sensor_col = self.actuator_col = self.sms_col = self.col = None
+
     def insert_sensor(self, data: dict):
         if self.sensor_col is None:
             return
@@ -95,8 +103,8 @@ class MongoLogger:
         try:
             self.sensor_col.insert_one(doc)
             self._prune_if_needed(self.sensor_col)
-        except Exception as e:
-            print(f"[MongoLogger] insert_sensor error: {e}")
+        except Exception as exc:
+            self._fail_or_disable(exc)
 
     def insert_actuator(self, data: dict):
         if self.actuator_col is None:
@@ -118,8 +126,8 @@ class MongoLogger:
         try:
             self.actuator_col.insert_one(doc)
             self._prune_if_needed(self.actuator_col)
-        except Exception as e:
-            print(f"[MongoLogger] insert_actuator error: {e}")
+        except Exception as exc:
+            self._fail_or_disable(exc)
 
     def insert_sms_event(self, status: str, detail: str = ""):
         if self.sms_col is None:
@@ -133,8 +141,8 @@ class MongoLogger:
         try:
             self.sms_col.insert_one(doc)
             self._prune_if_needed(self.sms_col)
-        except Exception as e:
-            print(f"[MongoLogger] insert_sms_event error: {e}")
+        except Exception as exc:
+            self._fail_or_disable(exc)
 
     def insert(self, data: dict):
         self.insert_sensor(data)

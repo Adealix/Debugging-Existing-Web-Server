@@ -119,7 +119,7 @@ function applyState(data) {
   if (serverMode!==currentMode) applyModeUI(serverMode);
 }
 async function refresh() {
-  try { const res = await fetch('/api/data'); const data = await res.json(); applyState(data); } catch(e) { console.warn(e); }
+  try { const res = await fetch('/api/live'); const data = await res.json(); applyState(data); } catch(e) { console.warn(e); }
 }
 applyModeUI('AUTO'); refresh(); setInterval(refresh,5000);
 </script>

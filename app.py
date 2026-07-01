@@ -27,7 +27,8 @@ from flask import Flask, Response, jsonify, request, redirect, send_from_directo
 
 from helpers import (
     get_local_ip, init_supervision_annotators,
-    latest_snapshot, get_detection_snapshot, log_event,
+    latest_snapshot, live_snapshot, history_snapshot,
+    get_detection_snapshot, log_event,
 )
 from serial_monitor import esp32_monitor, send_serial_command
 from camera import camera_worker, generate_camera_stream, init_camera
@@ -47,6 +48,7 @@ app = Flask(
     static_folder=os.path.join(os.path.dirname(__file__), "frontend", "static"),
     static_url_path="/static"
 )
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 300  # cache static files 5 min
 
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "frontend")
 
@@ -102,9 +104,21 @@ def latest():
     return jsonify(latest_snapshot())
 
 
+@app.route("/api/live")
+def api_live():
+    """Fast path: live sensor/actuator values only — ~1 KB JSON."""
+    return jsonify(live_snapshot())
+
+
+@app.route("/api/history")
+def api_history():
+    """History + events for charts — polled less frequently."""
+    return jsonify(history_snapshot())
+
+
 @app.route("/api/data")
 def api_data():
-    print("CURRENT MODE API:", S.state["mode"]) 
+    """Legacy full-snapshot endpoint (live + history)."""
     return jsonify(latest_snapshot())
 
 
@@ -327,7 +341,7 @@ def api_control():
         )
         commands.append(f"STEPPER_ROTATE {direction} x{rotations}")
 
-    response = {"status": "ok", "sent": commands, "state": latest_snapshot()}
+    response = {"status": "ok", "sent": commands, "state": live_snapshot()}
     if rejected:
         response["status"] = "partial" if commands else "ignored"
         response["rejected"] = rejected

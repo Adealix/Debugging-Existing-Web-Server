@@ -432,36 +432,54 @@ if (serverMode !== currentMode && currentMode !== 'MANUAL') {
 
 
 
-// ─── MAIN REFRESH ─────────────────────────────────────────────────────────────
-async function refreshData() {
+// ─── HISTORY DATA CACHE (avoid rebuilding charts when unchanged) ──────────────
+let _lastHistoryJSON = '';
+
+
+// ─── MAIN REFRESH — LIVE VALUES (every 2s) ────────────────────────────────────
+async function refreshLive() {
 try {
- const res  = await fetch('/api/data');
+ const res  = await fetch('/api/live');
  const data = await res.json();
  applyState(data);
-
-
- // DB history
- const hist          = data.history          || [];
- const sensorHist    = data.sensor_history    || [];
- const actuatorHist  = data.actuator_history  || [];
- const smsHist       = data.sms_history       || [];
-
-
- // Live trend chart + DB charts
- const labels = hist.map((r,i)=> r.time || String(i+1));
- buildChart(labels, hist.map(r=>r.ph), hist.map(r=>r.temp), hist.map(r=>r.turbidity));
- buildDbCharts(sensorHist);
-
-
- renderSensorHistory(sensorHist.slice(-10));
- renderActuatorHistory(actuatorHist.slice(-10));
- renderSmsHistory(smsHist.slice(-10));
-
-
  applyPageDataToPageSection(data);
+} catch(e) { console.warn('Live refresh error:',e); }
+}
 
 
- // Live events
+// ─── MAIN REFRESH — HISTORY + CHARTS (every 5s) ───────────────────────────────
+async function refreshHistory() {
+try {
+ const res  = await fetch('/api/history');
+ const data = await res.json();
+
+
+ // Skip rebuilding charts if history hasn't changed
+ const histJson = JSON.stringify(data.history || []);
+ if (histJson !== _lastHistoryJSON) {
+   _lastHistoryJSON = histJson;
+
+
+   const hist         = data.history         || [];
+   const sensorHist   = data.sensor_history   || [];
+   const actuatorHist = data.actuator_history || [];
+   const smsHist      = data.sms_history      || [];
+
+
+   // Live trend chart (top of dashboard)
+   const labels = hist.map((r,i)=> r.time || String(i+1));
+   buildChart(labels, hist.map(r=>r.ph), hist.map(r=>r.temp), hist.map(r=>r.turbidity));
+
+
+   // DB charts (DB tab)
+   buildDbCharts(sensorHist);
+   renderSensorHistory(sensorHist.slice(-10));
+   renderActuatorHistory(actuatorHist.slice(-10));
+   renderSmsHistory(smsHist.slice(-10));
+ }
+
+
+ // Events always refresh (they change independently)
  const tbody=document.getElementById('eventsBody');
  tbody.innerHTML='';
  if (!data.events?.length) {
@@ -473,7 +491,7 @@ try {
      tbody.appendChild(tr);
    });
  }
-} catch(e) { console.warn('Refresh error:',e); }
+} catch(e) { console.warn('History refresh error:',e); }
 }
 
 
@@ -493,9 +511,16 @@ const startPage = decodeURIComponent(window.location.hash.replace('#',''));
 activatePage(pageNames.includes(startPage) ? startPage : 'Dashboard');
 greetByTime();
 tickClock();
-refreshData();
-setInterval(refreshData, 2000);  // Poll every 2 seconds (was 1s — reduces server load 50%)
-setInterval(tickClock,   1000);
+
+// Live sensor/actuator values → every 2 seconds (lightweight, ~1 KB)
+refreshLive();
+setInterval(refreshLive, 2000);
+
+// History + charts + events → every 5 seconds (heavier, but changes slow)
+refreshHistory();
+setInterval(refreshHistory, 5000);
+
+setInterval(tickClock, 1000);
 
 
 

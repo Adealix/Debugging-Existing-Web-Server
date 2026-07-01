@@ -220,10 +220,19 @@ def apply_serial_update(parsed, raw_line):
 
 
 def latest_snapshot():
-    detection = get_detection_snapshot()
+    """Full snapshot — all live fields + history + events (legacy path)."""
+    snap = live_snapshot()
+    hist = history_snapshot()
+    snap.update(hist)
+    return snap
 
+
+def live_snapshot():
+    """Lightweight: live sensor/actuator values only — no history, no events.
+    Fast path for the dashboard's 2-second poll cycle."""
+    detection = get_detection_snapshot()
     with state_lock:
-        snapshot = {
+        snap = {
             "ph":                S.state["ph"],
             "temp":              S.state["temp"],
             "turbidity":         S.state["turbidity"],
@@ -249,23 +258,27 @@ def latest_snapshot():
             "health":            S.state["health"],
             "updated_at":        S.state["updated_at"],
         }
-
-        if snapshot["connection_source"] == "Offline":
+        if snap["connection_source"] == "Offline":
             for field in (
                 "ph", "temp", "turbidity", "light_lux", "distance_cm",
                 "pump", "peltier", "air_pump", "filter_pump",
                 "rgb", "rgb_color", "rgb_brightness", "gsm_status"):
-                snapshot[field] = None
+                snap[field] = None
+    return snap
 
+
+def history_snapshot():
+    """History + events only — for the separate /api/history endpoint."""
+    with state_lock:
         in_memory_history = list(S.history)
         events = list(S.events)
-
-    snapshot["sensor_history"]   = in_memory_history
-    snapshot["actuator_history"] = in_memory_history
-    snapshot["sms_history"]      = []
-    snapshot["history"]          = in_memory_history
-    snapshot["events"]           = events
-    return snapshot
+    return {
+        "sensor_history":   in_memory_history,
+        "actuator_history": in_memory_history,
+        "sms_history":      [],
+        "history":          in_memory_history,
+        "events":           events,
+    }
 
 
 def downsample_frame(frame, width, height):

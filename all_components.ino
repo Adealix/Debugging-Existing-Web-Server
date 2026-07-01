@@ -14,7 +14,7 @@
 
 const char* WIFI_SSID     = "Bagalwifi";
 const char* WIFI_PASSWORD = "kawawatao";
-const char* MQTT_BROKER   = "10.204.232.93";
+const char* MQTT_BROKER   = "10.140.75.93";
 const int   MQTT_PORT     = 1883;
 const char* MQTT_CLIENT   = "esp32_crayfish";
 
@@ -28,7 +28,6 @@ const char* MQTT_CLIENT   = "esp32_crayfish";
 #define TOPIC_LUX             "crayfish/lux"
 #define TOPIC_TEMP            "crayfish/temperature"
 #define TOPIC_ALERT           "crayfish/alert"
-#define TOPIC_SENSORS_BATCH   "crayfish/sensors/batch"
 
 
 
@@ -105,6 +104,8 @@ PubSubClient mqtt(wifiClient);
 #define DETECTION_OFFSET_CM  3.0
 #define COOL_ON_TEMP         30.0
 #define COOL_OFF_TEMP        28.0
+#define SAMPLES              30
+
 // JSN-SR04T constants
 #define SOUND_SPEED              0.0343
 #define TIMEOUT_US               30000
@@ -112,15 +113,35 @@ PubSubClient mqtt(wifiClient);
 #define JSN_MAX_RANGE_CM         450.0
 #define JSN_STABILITY_THRESHOLD  10.0
 
-// JSN-SR04T: how many readings per cycle and gap between them.
-// 5 readings × 500ms = ~2.5s per cycle.  3 readings × 500ms = ~1.5s.
-// If readings are stable at 3, you can also try reducing JSN_GAP_MS
-// to 300 (tested 150ms failed on this hardware).
-#define JSN_READINGS             3
-#define JSN_GAP_MS               500
+// --------------------------------------------------------------------
+// JSN-SR04T recovery time between triggers
+// --------------------------------------------------------------------
+// The JSN-SR04T needs real time for its receiver to settle after each
+// trigger before it can reliably hear the next echo. Calibration
+// (500ms between readings, via mqtt.loop()-while-waiting) read 10/10
+// successfully; a tight delay()-based loop -- even at 150ms apart --
+// read 0/5. getDistanceCM() uses calibration's exact 500ms
+// millis()-based timing instead of delay(), since that is the timing
+// proven to actually work on this hardware. This constant is no
+// longer used by getDistanceCM() but is left here for reference/easy
+// tuning if you want to try a different gap later.
+#define JSN_INTER_READING_DELAY_MS  500
 
-// pH sensor: number of ADC samples per reading (20 = ~200ms, 15 = ~150ms)
-#define PH_SAMPLES               15
+// --------------------------------------------------------------------
+// JSN-SR04T settle delay before the FIRST trigger in a reading batch
+// --------------------------------------------------------------------
+// Root-cause analysis: calibrateBaseline() runs once, immediately after
+// connectMQTT(), on an otherwise idle WiFi/RTOS stack, and reads 10/10
+// successfully. getDistanceCM() in loop() uses the exact same 500ms
+// millis()-based timing internally, yet was still failing -- because in
+// loop() it was being called right after getAvgPHRaw(), which spends
+// ~300ms in thirty back-to-back delay(10) calls with no mqtt.loop() in
+// between. pulseIn() on the ESP32 is sensitive to what the WiFi/FreeRTOS
+// scheduler is doing at the exact moment the trigger fires; coming out of
+// a long blocking stretch like that is exactly the kind of jitter that
+// causes a missed echo edge / timeout. This settle delay gives things a
+// moment to quiet down before the first trigger pulse of each batch.
+#define JSN_SETTLE_BEFORE_FIRST_TRIGGER_MS  50
 
 
 
@@ -247,26 +268,8 @@ bool  airPumpOn        = false;
 bool  cooling          = false;
 bool  smsSent          = false;
 float baselineDistance = 0.0;
-bool  ledCurrentlyOn   = false;
-bool  lastPumpState    = false;   // tracks turbidity water-pump on/off
+bool  ledCurrentlyOn   = false;   // tracks last LED state to avoid redundant MQTT publishes
 unsigned long lastDetectFeedMs = 0;  // millis() of last camera-triggered feed (for cooldown)
-
-// SMS non-blocking state machine  (see processSMS() below)
-enum SmsStep {
-  SMS_IDLE,
-  SMS_SEND_AT, SMS_WAIT_AT,
-  SMS_SEND_CSQ, SMS_WAIT_CSQ,
-  SMS_SEND_CREG, SMS_WAIT_CREG,
-  SMS_SEND_CMGF, SMS_WAIT_CMGF,
-  SMS_SEND_CMGS, SMS_WAIT_CMGS_PROMPT,
-  SMS_SEND_BODY, SMS_WAIT_CONFIRM,
-  SMS_DONE, SMS_FAILED
-};
-SmsStep       smsStep      = SMS_IDLE;
-String        smsMsgBuffer = "";     // the message to send
-String        sim800Buf    = "";     // accumulated SIM800 response
-unsigned long smsCmdSentAt = 0;      // millis() when current cmd was sent
-int           smsRetries   = 0;      // retry count for current step
 
 
 
@@ -536,21 +539,14 @@ void mqttPublish(const char* topic, const char* msg) {
 // SENSOR HELPERS
 // ================================
 float getAvgPHRaw() {
-  int buf[PH_SAMPLES];
-  for (int i = 0; i < PH_SAMPLES; i++) {
-    buf[i] = analogRead(PH_PIN);
-    mqtt.loop();
-    delay(10);
-  }
-  // Partial sort: just find the middle values, skip full bubble sort
-  for (int i = 0; i < PH_SAMPLES - 1; i++)
-    for (int j = i + 1; j < PH_SAMPLES; j++)
+  int buf[SAMPLES];
+  for (int i = 0; i < SAMPLES; i++) { buf[i] = analogRead(PH_PIN); delay(10); }
+  for (int i = 0; i < SAMPLES - 1; i++)
+    for (int j = i + 1; j < SAMPLES; j++)
       if (buf[i] > buf[j]) { int t = buf[i]; buf[i] = buf[j]; buf[j] = t; }
-  // Take middle 60% (skip 20% low, 20% high)
-  int skip = PH_SAMPLES / 5;
   long sum = 0;
-  for (int i = skip; i < PH_SAMPLES - skip; i++) sum += buf[i];
-  return sum / (float)(PH_SAMPLES - 2 * skip);
+  for (int i = 5; i < 25; i++) sum += buf[i];
+  return sum / 20.0;
 }
 
 
@@ -598,12 +594,14 @@ float jsnReadOnce() {
 // a millis()-based 500ms gap between triggers, with mqtt.loop() called
 // while waiting -- instead of a tight delay()-based loop.
 //
-// SETTLE DELAY: calibration works 10/10 because it runs once on
+// SETTLE DELAY (new): calibration works 10/10 because it runs once on
 // an otherwise-idle WiFi/RTOS stack right after connectMQTT(). In
-// loop(), this function runs first and a short settle delay after
-// the preceding iteration's MQTT activity helps pulseIn() stay
-// reliable — the ESP32 RTOS scheduler can jitter the ECHO edge
-// capture if it fires right after a busy period.
+// loop(), this function was previously called right after
+// getAvgPHRaw() -- ~300ms of thirty back-to-back delay(10) calls with
+// no mqtt.loop() in between -- and pulseIn() can lose the echo edge if
+// it fires right as the WiFi/RTOS scheduler is busy. The short settle
+// delay below, plus calling this FIRST in loop() (see loop() below),
+// removes that adjacency.
 float getDistanceCM(bool verbose = false) {
   mqtt.loop();
   delay(20);
@@ -614,7 +612,7 @@ float getDistanceCM(bool verbose = false) {
   float minVal = 9999;
   float maxVal = 0;
 
-  for (int i = 0; i < JSN_READINGS; i++) {
+  for (int i = 0; i < 5; i++) {
     float d = jsnReadOnce();
 
     if (d >= 0) {
@@ -625,21 +623,14 @@ float getDistanceCM(bool verbose = false) {
     }
 
     mqtt.loop();
-    // Use millis()-based gap so MQTT stays responsive during wait
-    unsigned long gapStart = millis();
-    while (millis() - gapStart < JSN_GAP_MS) {
-      mqtt.loop();
-      delay(5);
-    }
+    delay(500);
   }
 
-  if (valid < JSN_READINGS / 2 + 1) {
+  if (valid < 3) {
     if (verbose) {
-      Serial.print("[JSN] DIAGNOSIS: Only ");
-      Serial.print(valid);
-      Serial.print("/");
-      Serial.print(JSN_READINGS);
-      Serial.println(" readings valid.");
+      Serial.println("[JSN] DIAGNOSIS: No echo received on any of the 5 readings.");
+      Serial.println("[JSN]   Possible causes: wiring issue, defective sensor,");
+      Serial.println("[JSN]   object too close, or nothing in range.");
     }
     return 999.0;
   }
@@ -651,11 +642,13 @@ float getDistanceCM(bool verbose = false) {
     Serial.print(average);
     Serial.print(" cm (");
     Serial.print(valid);
-    Serial.print("/");
-    Serial.print(JSN_READINGS);
-    Serial.println(" valid readings)");
+    Serial.println("/5 valid readings)");
 
     float variation = (valid > 1) ? (maxVal - minVal) : 0.0;
+    Serial.print("[JSN] Variation: ");
+    Serial.print(variation);
+    Serial.println(" cm");
+
     if (variation > JSN_STABILITY_THRESHOLD) {
       Serial.println("[JSN] WARNING: Readings are UNSTABLE.");
     } else {
@@ -802,23 +795,23 @@ float calibrateBaseline() {
 //     worked, instead of always claiming success
 // --------------------------------------------------------------------
 
-// ================================
-// SIM800L — non-blocking helpers
-// ================================
-
-// Drains the SIM800 serial buffer into the accumulated response string.
-// Returns the full accumulated buffer so far (cleared by
-// sim800ClearBuf()). NEVER blocks — safe to call every loop iteration.
-String sim800ReadNB() {
-  while (sim800.available()) {
-    char c = sim800.read();
-    sim800Buf += c;
+// Reads whatever the SIM800L sends back for up to `timeoutMs`,
+// returns it as a String, and echoes it to Serial for debugging.
+String sim800Read(unsigned long timeoutMs) {
+  String resp = "";
+  unsigned long start = millis();
+  while (millis() - start < timeoutMs) {
+    while (sim800.available()) {
+      char c = sim800.read();
+      resp += c;
+    }
   }
-  return sim800Buf;
-}
-
-void sim800ClearBuf() {
-  sim800Buf = "";
+  resp.trim();
+  if (resp.length() > 0) {
+    Serial.print("[SIM800] <- ");
+    Serial.println(resp);
+  }
+  return resp;
 }
 
 void sim800SendCmd(const String& cmd) {
@@ -827,164 +820,98 @@ void sim800SendCmd(const String& cmd) {
   sim800.println(cmd);
 }
 
-// ================================
-// SMS — non-blocking state machine
-// ================================
-// Instead of blocking the main loop for up to 10 seconds per SMS attempt,
-// processSMS() runs one step per loop() iteration (every ~2.5s).  Each step
-// sends one AT command and then returns; the response is checked on
-// subsequent iterations.  The entire sequence takes several loop cycles
-// but never blocks for more than ~5ms per call.
+// Checks basic module health: AT ping, signal quality, network registration.
+// Prints diagnostics either way. Returns true only if module is responsive
+// AND registered on the network (registered = required for SMS to actually
+// leave the module).
+bool sim800CheckReady() {
+  bool ok = true;
+  String r;
 
-// Start the SMS sequence.  Sets smsStep to the first step so that
-// processSMS() will pick it up on the next loop iteration.
-void smsBegin(const String& msg) {
-  smsMsgBuffer  = msg;
-  smsStep       = SMS_SEND_AT;
-  smsRetries    = 0;
-  sim800ClearBuf();
-  smsCmdSentAt  = 0;
-  Serial.println("[SMS] State machine started.");
+  // Retry the initial AT ping a few times -- the SIM800L's autobaud
+  // detection needs to "hear" a clean AT at the configured rate before
+  // it locks on. A single attempt right after begin() can still miss;
+  // a few tries a moment apart gives it a fair chance.
+  bool atOk = false;
+  for (int attempt = 0; attempt < 3 && !atOk; attempt++) {
+    sim800SendCmd("AT");
+    r = sim800Read(1000);
+    if (r.indexOf("OK") != -1) atOk = true;
+    else delay(300);
+  }
+  if (!atOk) {
+    Serial.println("[SIM800] WARNING: Module did not respond to AT. Check power/wiring.");
+    ok = false;
+  }
+
+  sim800SendCmd("AT+CSQ");                 // signal quality: 0-31, 99 = unknown
+  r = sim800Read(1000);
+  // r looks like: +CSQ: 18,0
+  int csqIdx = r.indexOf("+CSQ:");
+  if (csqIdx != -1) {
+    int csqVal = r.substring(csqIdx + 5).toInt();
+    Serial.print("[SIM800] Signal quality (CSQ): ");
+    Serial.print(csqVal);
+    Serial.println(csqVal == 99 ? "  (99 = no signal!)" : (csqVal < 10 ? "  (weak)" : "  (ok)"));
+    if (csqVal == 99 || csqVal == 0) ok = false;
+  }
+
+  sim800SendCmd("AT+CREG?");               // network registration status
+  r = sim800Read(1000);
+  // r looks like: +CREG: 0,1   (the second number: 1 or 5 = registered)
+  bool registered = (r.indexOf(",1") != -1) || (r.indexOf(",5") != -1);
+  Serial.print("[SIM800] Network registered: ");
+  Serial.println(registered ? "YES" : "NO");
+  if (!registered) ok = false;
+
+  return ok;
 }
 
-// Called once per loop() iteration.  Advances the SMS state machine
-// one step at a time without blocking.  Sets smsSent = true when the
-// sequence is done (success or failure).
-void processSMS() {
-  if (smsStep == SMS_IDLE || smsStep == SMS_DONE || smsStep == SMS_FAILED) return;
+// Returns true if the module confirmed the SMS was actually sent
+// (+CMGS response), false otherwise.
+bool sendSMS(String msg) {
+  Serial.println("[SMS] ---- Send attempt start ----");
 
-  String resp = sim800ReadNB();  // non-blocking drain
-
-  // --- Timeout per step: ~3s (covers multiple loop cycles) ---
-  unsigned long elapsed = millis() - smsCmdSentAt;
-  if (smsCmdSentAt != 0 && elapsed > 3000) {
-    smsRetries++;
-    if (smsRetries >= 3) {
-      Serial.print("[SMS] FAILED after 3 retries at step ");
-      Serial.println((int)smsStep);
-      smsStep = SMS_FAILED;
-      return;
-    }
-    Serial.print("[SMS] Timeout at step ");
-    Serial.print((int)smsStep);
-    Serial.print("  --  retry ");
-    Serial.println(smsRetries + 1);
-    // Re-send the command (step value will re-fire on next call)
-    smsCmdSentAt = 0;
+  if (!sim800CheckReady()) {
+    Serial.println("[SMS] ABORTED: module not ready / not registered on network.");
+    Serial.println("[SMS]   -> If AT timed out: check SIM800 power supply (needs");
+    Serial.println("[SMS]      ~4V, up to 2A bursts) and RX/TX wiring (and that");
+    Serial.println("[SMS]      ESP32 TX -> SIM800 RX is level-shifted to ~3.3-4V if needed).");
+    Serial.println("[SMS]   -> If CSQ=99 or CREG not registered: check antenna,");
+    Serial.println("[SMS]      SIM card is activated/has load, and signal in your area.");
+    return false;
   }
 
-  switch (smsStep) {
+  sim800SendCmd("AT+CMGF=1");               // text mode
+  sim800Read(1000);
 
-    // --- 1. Send AT, wait for OK ---
-    case SMS_SEND_AT:
-      sim800SendCmd("AT");
-      smsCmdSentAt = millis();
-      smsStep = SMS_WAIT_AT;
-      break;
-    case SMS_WAIT_AT:
-      if (resp.indexOf("OK") != -1) {
-        Serial.println("[SMS] AT OK");
-        smsStep = SMS_SEND_CSQ;
-        sim800ClearBuf();
-      }
-      break;
-
-    // --- 2. Send AT+CSQ, check signal ---
-    case SMS_SEND_CSQ:
-      sim800SendCmd("AT+CSQ");
-      smsCmdSentAt = millis();
-      smsStep = SMS_WAIT_CSQ;
-      break;
-    case SMS_WAIT_CSQ:
-      if (resp.indexOf("+CSQ:") != -1) {
-        int csqVal = -1;
-        int idx = resp.indexOf("+CSQ:");
-        if (idx != -1) csqVal = resp.substring(idx + 5).toInt();
-        Serial.print("[SMS] CSQ = ");
-        Serial.println(csqVal);
-        if (csqVal >= 0 && csqVal < 10) {
-          Serial.println("[SMS] Signal very weak, continuing anyway...");
-        }
-        smsStep = SMS_SEND_CREG;
-        sim800ClearBuf();
-      }
-      break;
-
-    // --- 3. Send AT+CREG?, check registration ---
-    case SMS_SEND_CREG:
-      sim800SendCmd("AT+CREG?");
-      smsCmdSentAt = millis();
-      smsStep = SMS_WAIT_CREG;
-      break;
-    case SMS_WAIT_CREG:
-      if (resp.indexOf("+CREG:") != -1) {
-        bool reg = (resp.indexOf(",1") != -1) || (resp.indexOf(",5") != -1);
-        Serial.print("[SMS] Network registration: ");
-        Serial.println(reg ? "YES" : "NO");
-        smsStep = reg ? SMS_SEND_CMGF : SMS_FAILED;
-        sim800ClearBuf();
-      }
-      break;
-
-    // --- 4. Set text mode ---
-    case SMS_SEND_CMGF:
-      sim800SendCmd("AT+CMGF=1");
-      smsCmdSentAt = millis();
-      smsStep = SMS_WAIT_CMGF;
-      break;
-    case SMS_WAIT_CMGF:
-      if (resp.indexOf("OK") != -1) {
-        smsStep = SMS_SEND_CMGS;
-        sim800ClearBuf();
-      }
-      break;
-
-    // --- 5. Send AT+CMGS, wait for ">" prompt ---
-    case SMS_SEND_CMGS:
-      sim800SendCmd("AT+CMGS=\"+639218255596\"");
-      smsCmdSentAt = millis();
-      smsStep = SMS_WAIT_CMGS_PROMPT;
-      break;
-    case SMS_WAIT_CMGS_PROMPT:
-      if (resp.indexOf(">") != -1) {
-        smsStep = SMS_SEND_BODY;
-        sim800ClearBuf();
-      }
-      break;
-
-    // --- 6. Send message body + Ctrl+Z ---
-    case SMS_SEND_BODY:
-      sim800.print(smsMsgBuffer);
-      delay(10);
-      sim800.write(26);   // Ctrl+Z
-      smsCmdSentAt = millis();
-      smsStep = SMS_WAIT_CONFIRM;
-      Serial.println("[SMS] Body sent, waiting for confirmation...");
-      break;
-    case SMS_WAIT_CONFIRM:
-      if (resp.indexOf("+CMGS") != -1) {
-        Serial.println("[SMS] CONFIRMED SENT by module.");
-        smsStep = SMS_DONE;
-      } else if (resp.indexOf("ERROR") != -1) {
-        Serial.println("[SMS] Module returned ERROR after send.");
-        smsStep = SMS_FAILED;
-      }
-      break;
-
-    default:
-      break;
+  sim800SendCmd("AT+CMGS=\"+639218255596\"");
+  String prompt = sim800Read(2000);
+  if (prompt.indexOf(">") == -1) {
+    Serial.println("[SMS] ABORTED: module did not give the '>' prompt -- it did not");
+    Serial.println("[SMS]   accept the AT+CMGS command (often a brown-out/reset right");
+    Serial.println("[SMS]   here is the real cause -- check power supply).");
+    return false;
   }
 
-  if (smsStep == SMS_DONE) {
-    Serial.println("[SMS] ---- Send complete ----");
-    smsSent = true;
-    smsStep = SMS_IDLE;
-    smsMsgBuffer = "";
-  } else if (smsStep == SMS_FAILED) {
-    Serial.println("[SMS] ---- Send FAILED ----");
-    smsSent = true;   // don't re-try every loop; one attempt per detection event
-    smsStep = SMS_IDLE;
-    smsMsgBuffer = "";
+  sim800.print(msg);
+  delay(200);
+  sim800.write(26);   // Ctrl+Z to actually send
+
+  // Sending over the network can take several seconds; +CMGS / ERROR
+  // confirms whether it actually went out.
+  String result = sim800Read(10000);
+
+  if (result.indexOf("+CMGS") != -1) {
+    Serial.println("[SMS] CONFIRMED SENT by module.");
+    Serial.println("[SMS] ---- Send attempt end ----");
+    return true;
+  } else {
+    Serial.println("[SMS] FAILED: module did not confirm with +CMGS.");
+    Serial.println("[SMS]   Common causes: weak/no signal, SIM out of load/inactive,");
+    Serial.println("[SMS]   blocked recipient format, or a brown-out during transmit.");
+    Serial.println("[SMS] ---- Send attempt end ----");
+    return false;
   }
 }
 
@@ -1051,32 +978,33 @@ void setup() {
 
 
 // ================================
-// MAIN LOOP — blocking sensor reads
+// MAIN LOOP
 // ================================
-// Timing (no fixed delays — loop runs as fast as sensors allow):
-//   distance 3×500ms  = 1,500ms  (services MQTT during gaps)
-//   pH 15×10ms        =   150ms  (mqtt.loop() every sample)
-//   turbidity         =     1ms  (instant ADC read)
-//   lux               =   120ms  (BH1750 I2C)
-//   temp (DS18B20)    =   750ms  (blocking, reliable)
-//   SMS state machine =     0ms  (non-blocking, no per-iteration delay)
-//   all other logic   =    10ms
-//   ──────────────────────────
-//   TOTAL             = ~2,531ms
-// --------------------------------------------------
-
 void loop() {
   if (!mqtt.connected()) {
     connectMQTT();
   }
-  mqtt.loop();
-  processSMS();   // non-blocking SMS state machine — never blocks the loop
+  if (mqtt.connected()) mqtt.loop();
 
   Serial.println();
   Serial.println("========== SENSOR READINGS ==========");
 
-  // --- 1. Distance (takes ~1.5s, but services MQTT during gaps) ---
-  float distance = getDistanceCM(false);
+  // --------------------------------------------------
+  // Ultrasonic Distance -- MOVED TO FIRST IN loop()
+  // --------------------------------------------------
+  // Root-cause fix: this used to run AFTER getAvgPHRaw(), which spends
+  // ~300ms in thirty back-to-back delay(10) calls with no mqtt.loop()
+  // in between. pulseIn() on ESP32 is sensitive to WiFi/RTOS scheduler
+  // activity at the exact moment the trigger fires, and coming out of
+  // that long blocking stretch was producing exactly the "NO ECHO"
+  // symptom you saw -- even though the 500ms internal timing inside
+  // getDistanceCM() is identical to the calibration routine that reads
+  // 10/10 successfully (calibration also runs on an otherwise-idle
+  // stack, right after connectMQTT()). Reading distance FIRST, before
+  // any of the other blocking sensor work, plus the short settle delay
+  // inside getDistanceCM() itself, removes that bad adjacency.
+  // --------------------------------------------------
+  float distance = getDistanceCM(true);
   mqttPublish(TOPIC_DISTANCE, distance);
 
   Serial.print("[SENSOR] Distance  : ");
@@ -1091,19 +1019,22 @@ void loop() {
     Serial.println(" cm");
   }
 
-  if (smsStep == SMS_IDLE && !smsSent && distance < (baselineDistance - DETECTION_OFFSET_CM)) {
+  if (!smsSent && distance < (baselineDistance - DETECTION_OFFSET_CM)) {
     String smsMsg = "CRAYFISH DETECTED INSIDE HIDE.\nBehavior: Occupying Shelter.\nDistance: " + String(distance, 2) + " cm";
-    Serial.println("[ALERT] Crayfish inside hide -- starting SMS (non-blocking)");
-    mqttPublish(TOPIC_ALERT, "CRAYFISH_INSIDE_HIDE");
-    smsBegin(smsMsg);
+    Serial.println("[ALERT] Crayfish inside hide -- sending SMS!");
+    bool sent = sendSMS(smsMsg);
+    mqttPublish(TOPIC_ALERT, sent ? "CRAYFISH_INSIDE_HIDE" : "CRAYFISH_INSIDE_HIDE_SMS_FAILED");
+    smsSent = true;
   }
 
-  if (smsSent && smsStep == SMS_IDLE && distance > (baselineDistance - 1.0)) {
+  if (smsSent && distance > (baselineDistance - 1.0)) {
     smsSent = false;
     Serial.println("[ALERT] Crayfish exited hide -- SMS reset.");
   }
 
-  // --- 3. pH (150ms) ---
+  // --------------------------------------------------
+  // pH + Air Pump
+  // --------------------------------------------------
   float raw     = getAvgPHRaw();
   float voltage = (raw / 4095.0) * 3.3;
   float pH      = 7.0 + SLOPE * (voltage - VOLTAGE_AT_7);
@@ -1132,7 +1063,9 @@ void loop() {
     if ( airPumpOn && inRange)    setAirPump(false);
   }
 
-  // --- 4. Turbidity (instant) ---
+  // --------------------------------------------------
+  // Turbidity + Water Pump
+  // --------------------------------------------------
   int turbidity = analogRead(TURBIDITY_PIN);
   mqttPublish(TOPIC_TURBIDITY, (float)turbidity);
 
@@ -1145,14 +1078,19 @@ void loop() {
   }
 
   if (ctrlPump.mode == AUTO) {
-    bool shouldPump = turbidity > TURBIDITY_THRESHOLD;
-    if (shouldPump != lastPumpState) {
-      setPump(shouldPump);
-      lastPumpState = shouldPump;
-    }
+    setPump(turbidity > TURBIDITY_THRESHOLD);
   }
 
-  // --- 5. Light (~120ms) ---
+  // --------------------------------------------------
+  // Light + LED Strip
+  //
+  // AUTO logic (hysteresis prevents flickering at the boundary):
+  //   lux < 500  --> all 30 LEDs turn ON  together (solid white, single show())
+  //   lux > 600  --> all 30 LEDs turn OFF together (solid black, single show())
+  //   lux 500-600 --> hold current state, no change
+  //
+  // MANUAL logic: obeys the last ON/OFF command received over MQTT.
+  // --------------------------------------------------
   float lux = lightMeter.readLightLevel();
   mqttPublish(TOPIC_LUX, lux);
 
@@ -1167,9 +1105,9 @@ void loop() {
   if (ctrlLED.mode == AUTO) {
     bool shouldBeOn;
 
-    if      (!ledCurrentlyOn && lux < LUX_LED_ON)   shouldBeOn = true;
-    else if ( ledCurrentlyOn && lux > LUX_LED_OFF)  shouldBeOn = false;
-    else                                              shouldBeOn = ledCurrentlyOn;
+    if      (!ledCurrentlyOn && lux < LUX_LED_ON)   shouldBeOn = true;           // dark   -> LED ON
+    else if ( ledCurrentlyOn && lux > LUX_LED_OFF)  shouldBeOn = false;          // bright -> LED OFF
+    else                                              shouldBeOn = ledCurrentlyOn; // hold state (hysteresis)
 
     Serial.println(shouldBeOn ? "DARK  -> LED ON" : "BRIGHT -> LED OFF");
     applyLED(shouldBeOn);
@@ -1178,7 +1116,9 @@ void loop() {
     applyLED(ctrlLED.manualState);
   }
 
-  // --- 6. Temperature (blocking read, reliable) ---
+  // --------------------------------------------------
+  // Temperature + Cooling
+  // --------------------------------------------------
   tempSensor.requestTemperatures();
   float temp = tempSensor.getTempCByIndex(0);
   mqttPublish(TOPIC_TEMP, temp);
@@ -1198,7 +1138,9 @@ void loop() {
     if (temp <= COOL_OFF_TEMP) setCooling(false);
   }
 
-  // --- 7. Feeder (Auto via Serial command) ---
+  // --------------------------------------------------
+  // Feeder (Auto via Serial command)
+  // --------------------------------------------------
   if (ctrlFeeder.mode == AUTO && Serial.available()) {
     String cmd = Serial.readStringUntil('\n');
     cmd.trim();
@@ -1207,14 +1149,7 @@ void loop() {
     }
   }
 
-  // --- 8. Batch publish all sensor readings in ONE MQTT message ---
-  String batch = "{\"ph\":" + String(pH, 2)
-    + ",\"temp\":" + String(temp, 2)
-    + ",\"turbidity\":" + String(turbidity)
-    + ",\"lux\":" + String(lux, 2)
-    + ",\"distance\":" + String(distance, 2)
-    + "}";
-  mqttPublish(TOPIC_SENSORS_BATCH, batch.c_str());
-
   Serial.println("=====================================");
+
+  delay(1000);
 }
