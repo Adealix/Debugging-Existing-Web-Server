@@ -66,12 +66,6 @@
           <button class="btn btn-on" id="btn-rgb-ON" onclick="setManualRelay('rgb','ON')">🌈 ON</button>
           <button class="btn btn-off" id="btn-rgb-OFF" onclick="setManualRelay('rgb','OFF')">OFF</button>
         </div>
-        <div class="colour-grid" id="colourGrid" style="margin-top:8px;">
-          <button class="btn-colour swatch-blue" onclick="setRgbColour('blue')" data-colour="blue">Blue</button>
-          <button class="btn-colour swatch-cyan" onclick="setRgbColour('cyan')" data-colour="cyan">Cyan</button>
-          <button class="btn-colour swatch-purple" onclick="setRgbColour('purple')" data-colour="purple">Purple</button>
-          <button class="btn-colour swatch-white" onclick="setRgbColour('white')" data-colour="white">White</button>
-        </div>
         <div class="slider-row"><span style="font-size:11px;color:var(--muted);">Brightness</span><input id="rgbSlider" type="range" min="0" max="100" value="60" oninput="document.getElementById('brightnessVal').innerText=this.value+'%'" onchange="setRgbBrightness(this.value)" /><span class="slider-label" id="brightnessVal">60%</span></div>
         <div class="ctrl-label" style="margin-top:12px;">Peltier</div>
         <div class="act-grid">

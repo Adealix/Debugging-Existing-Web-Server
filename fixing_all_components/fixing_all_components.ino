@@ -12,11 +12,18 @@
 
 
 
+
+
+
 const char* WIFI_SSID     = "Bagalwifi";
 const char* WIFI_PASSWORD = "kawawatao";
 const char* MQTT_BROKER   = "10.204.232.93";
 const int   MQTT_PORT     = 1883;
 const char* MQTT_CLIENT   = "esp32_crayfish";
+
+
+
+
 
 
 
@@ -33,12 +40,20 @@ const char* MQTT_CLIENT   = "esp32_crayfish";
 
 
 
+
+
+
+
 // Status publish topics
 #define TOPIC_STATUS_AIRPUMP  "crayfish/status/airpump"
 #define TOPIC_STATUS_PUMP     "crayfish/status/pump"
 #define TOPIC_STATUS_COOLING  "crayfish/status/cooling"
 #define TOPIC_STATUS_LED      "crayfish/status/led"
 #define TOPIC_STATUS_FEEDER   "crayfish/status/feeder"
+
+
+
+
 
 
 
@@ -58,6 +73,10 @@ const char* MQTT_CLIENT   = "esp32_crayfish";
 
 
 
+
+
+
+
 // Mode subscribe topics (Pi -> ESP32)
 #define TOPIC_MODE_AIRPUMP    "crayfish/mode/airpump"
 #define TOPIC_MODE_PUMP       "crayfish/mode/pump"
@@ -68,8 +87,16 @@ const char* MQTT_CLIENT   = "esp32_crayfish";
 
 
 
+
+
+
+
 WiFiClient   wifiClient;
 PubSubClient mqtt(wifiClient);
+
+
+
+
 
 
 
@@ -95,13 +122,17 @@ PubSubClient mqtt(wifiClient);
 
 
 
+
+
+
+
 // ================================
 // THRESHOLDS & CONSTANTS
 // ================================
 #define PH_SAFE_LOW          6.5
 #define PH_SAFE_HIGH         7.5
-#define VOLTAGE_AT_7         2.56
-#define SLOPE               -1.5
+#define VOLTAGE_AT_7  2.500f  // Standard value for most pH sensors
+#define SLOPE         -0.059f // Standard slope (59mV per pH unit)
 #define TURBIDITY_THRESHOLD  2000
 #define DETECTION_OFFSET_CM  3.0
 #define COOL_ON_TEMP         30.0
@@ -113,6 +144,7 @@ PubSubClient mqtt(wifiClient);
 #define JSN_MAX_RANGE_CM         450.0
 #define JSN_STABILITY_THRESHOLD  10.0
 
+
 // JSN-SR04T: how many readings per cycle and gap between them.
 // 5 readings × 500ms = ~2.5s per cycle.  3 readings × 500ms = ~1.5s.
 // If readings are stable at 3, you can also try reducing JSN_GAP_MS
@@ -120,8 +152,13 @@ PubSubClient mqtt(wifiClient);
 #define JSN_READINGS             3
 #define JSN_GAP_MS               500
 
+
 // pH sensor: number of ADC samples per reading (20 = ~200ms, 15 = ~150ms)
 #define PH_SAMPLES               15
+
+
+
+
 
 
 
@@ -134,14 +171,17 @@ PubSubClient mqtt(wifiClient);
 #define LUX_LED_ON   500.0   // lux -- turn all LEDs ON  when BELOW this
 #define LUX_LED_OFF  600.0   // lux -- turn all LEDs OFF when ABOVE this
 
+
 // Static brightness for the strip when ON (0-255).
 #define LED_BRIGHTNESS  200
+
 
 // Target colour when the strip is ON -- plain white, applied identically
 // to all 30 pixels.
 #define LED_COLOR_R  255
 #define LED_COLOR_G  255
 #define LED_COLOR_B  255
+
 
 // --------------------------------------------------------------------
 // IMPORTANT HARDWARE NOTE on WS2812B "some LEDs stay on / wrong colour"
@@ -168,6 +208,10 @@ PubSubClient mqtt(wifiClient);
 
 
 
+
+
+
+
 // ================================
 // OBJECTS
 // ================================
@@ -178,13 +222,18 @@ HardwareSerial    sim800(2);
 CRGB              leds[NUM_LEDS];
 
 
+
+
 const int IN1 = 13;
 const int IN2 = 19;
 const int IN3 = 14;
 const int IN4 = 32;
 
 
+
+
 Stepper feeder(2048, IN1, IN2, IN3, IN4);
+
 
 // --------------------------------------------------------------------
 // FEEDER DIRECTION
@@ -205,6 +254,7 @@ Stepper feeder(2048, IN1, IN2, IN3, IN4);
 #define FEED_REVOLUTIONS  2
 #define FEED_STEPS        (-2048 * FEED_REVOLUTIONS)   // negative = counter-clockwise
 
+
 // A live camera typically keeps publishing "crayfish detected" on every
 // frame for as long as the crayfish stays in view, not just once. Without
 // a cooldown, that would call the stepper repeatedly back-to-back.
@@ -212,6 +262,10 @@ Stepper feeder(2048, IN1, IN2, IN3, IN4);
 // feeds; detections arriving before the cooldown expires are logged and
 // ignored, not queued.
 #define FEED_DETECT_COOLDOWN_MS  60000UL   // 60 s between camera-triggered feeds
+
+
+
+
 
 
 
@@ -224,10 +278,18 @@ enum Mode { AUTO, MANUAL };
 
 
 
+
+
+
+
 struct Actuator {
   Mode mode        = AUTO;
   bool manualState = false;
 };
+
+
+
+
 
 
 
@@ -241,6 +303,10 @@ Actuator ctrlFeeder;
 
 
 
+
+
+
+
 // ================================
 // RUNTIME STATE
 // ================================
@@ -248,9 +314,29 @@ bool  airPumpOn        = false;
 bool  cooling          = false;
 bool  smsSent          = false;
 float baselineDistance = 0.0;
+int   ledBrightness    = LED_BRIGHTNESS;  // dynamic 0-255, set via MQTT
 bool  ledCurrentlyOn   = false;
 bool  lastPumpState    = false;   // tracks turbidity water-pump on/off
 unsigned long lastDetectFeedMs = 0;  // millis() of last camera-triggered feed (for cooldown)
+
+
+
+
+// Turbidity smoothing and hysteresis
+#define TURBIDITY_SAMPLES  5  // Number of readings to average
+int turbidityReadings[TURBIDITY_SAMPLES] = {0};
+int turbidityIndex = 0;
+int turbiditySum = 0;
+int smoothedTurbidity = 0;
+
+
+// Turbidity hysteresis thresholds (adjusted for YOUR sensor)
+// Clean = ~2000, Dirty = ~1000
+#define TURBIDITY_ON_THRESHOLD  1200  // Turn pump ON when turbidity drops below this (dirty)
+#define TURBIDITY_OFF_THRESHOLD 1800  // Turn pump OFF when turbidity rises above this (clean)
+
+
+
 
 // SMS non-blocking state machine  (see processSMS() below)
 enum SmsStep {
@@ -272,9 +358,14 @@ int           smsRetries   = 0;      // retry count for current step
 
 
 
+
+
+
+
 // ================================
 // LED HELPERS
 // ================================
+
 
 // Build the FULL target frame (every one of the 30 pixels set to the
 // exact same value) in the array, then push it with a SINGLE
@@ -282,11 +373,13 @@ int           smsRetries   = 0;      // retry count for current step
 // pixel ends up consistent -- repeated shows of the same buffer never
 // fixes a corrupted frame, it only re-displays it.
 
+
 // Force every LED to absolute black -- one consistent push.
 void ledAllOff() {
   fill_solid(leds, NUM_LEDS, CRGB::Black);
   FastLED.show();
 }
+
 
 // Set every LED to the exact same solid white colour -- one consistent push.
 // Brightness is dynamically adjustable via MQTT (ledBrightness global).
@@ -297,10 +390,12 @@ void ledAllOn() {
   FastLED.show();
 }
 
+
 // Central LED apply function -- used by both AUTO and MANUAL paths.
 // Only publishes MQTT status when the on/off state actually changes.
 void applyLED(bool turnOn) {
   bool changed = (turnOn != ledCurrentlyOn);
+
 
   if (turnOn) {
     ledAllOn();
@@ -324,8 +419,13 @@ void applyLED(bool turnOn) {
     }
   }
 
+
   ledCurrentlyOn = turnOn;
 }
+
+
+
+
 
 
 
@@ -348,6 +448,10 @@ void setAirPump(bool on) {
 
 
 
+
+
+
+
 void setPump(bool on) {
   digitalWrite(PUMP_RELAY_PIN, on ? LOW : HIGH);
   String s = String(on ? "ON" : "OFF") + "|" +
@@ -358,6 +462,10 @@ void setPump(bool on) {
   Serial.print(" | Mode: ");
   Serial.println(ctrlPump.mode == AUTO ? "AUTO" : "MANUAL");
 }
+
+
+
+
 
 
 
@@ -374,11 +482,13 @@ void setCooling(bool on) {
   Serial.println(ctrlCooling.mode == AUTO ? "AUTO" : "MANUAL");
 }
 
+
 // setLED is called only from the MQTT manual-command path.
 void setLED(bool on) {
   ctrlLED.manualState = on;
   applyLED(on);
 }
+
 
 // Runs the feeder one counter-clockwise feed cycle (see FEED_STEPS).
 // `reason` is just for the status payload / serial log (e.g. "MANUAL",
@@ -395,6 +505,10 @@ void runFeeder(const char* reason) {
 
 
 
+
+
+
+
 // ================================
 // MQTT CALLBACK
 // ================================
@@ -402,6 +516,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int len) {
   String msg, t;
   for (unsigned int i = 0; i < len; i++) msg += (char)payload[i];
   t = String(topic);
+
+
+
+
 
 
 
@@ -427,6 +545,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int len) {
     ctrlFeeder.mode = (msg == "MANUAL") ? MANUAL : AUTO;
     Serial.println("[MQTT] Feeder mode -> " + msg);
   }
+
+
+
+
 
 
 
@@ -485,6 +607,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int len) {
 
 
 
+
+
+
+
 // ================================
 // WiFi + MQTT CONNECT
 // ================================
@@ -493,6 +619,7 @@ void connectWiFi() {
   Serial.print("[WIFI] Connecting");
   while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
   Serial.println("\n[WIFI] Connected: " + WiFi.localIP().toString());
+
 
   // --------------------------------------------------------------------
   // WHY THIS MATTERS FOR THE ULTRASONIC SENSOR
@@ -510,10 +637,15 @@ void connectWiFi() {
 
 
 
+
+
+
+
 void connectMQTT() {
   mqtt.setServer(MQTT_BROKER, MQTT_PORT);
   mqtt.setCallback(mqttCallback);
   mqtt.setBufferSize(512);
+
 
   Serial.print("[MQTT] Connecting...");
   if (mqtt.connect(MQTT_CLIENT)) {
@@ -539,12 +671,20 @@ void connectMQTT() {
 
 
 
+
+
+
+
 void mqttPublish(const char* topic, float value) {
   if (mqtt.connected()) mqtt.publish(topic, String(value, 2).c_str());
 }
 void mqttPublish(const char* topic, const char* msg) {
   if (mqtt.connected()) mqtt.publish(topic, msg);
 }
+
+
+
+
 
 
 
@@ -573,6 +713,10 @@ float getAvgPHRaw() {
 
 
 
+
+
+
+
 // ================================
 // JSN-SR04T: Single distance reading
 // ================================
@@ -584,21 +728,30 @@ float jsnReadOnce() {
     delayMicroseconds(30);
     digitalWrite(TRIG_PIN, LOW);
 
+
     unsigned long start = micros();
     while (digitalRead(ECHO_PIN) == LOW && micros() - start <= TIMEOUT_US) yield();
     if (micros() - start > TIMEOUT_US) { delay(10); continue; }
+
 
     start = micros();
     while (digitalRead(ECHO_PIN) == HIGH && micros() - start <= TIMEOUT_US) yield();
     unsigned long duration = micros() - start;
 
+
     if (duration == 0 || duration > TIMEOUT_US) { delay(10); continue; }
+
 
     return (duration * SOUND_SPEED) / 2.0;
   }
 
+
   return -1.0;
 }
+
+
+
+
 
 
 
@@ -626,13 +779,16 @@ float getDistanceCM(bool verbose = false) {
   delay(20);
   yield();
 
+
   float sum    = 0;
   int   valid  = 0;
   float minVal = 9999;
   float maxVal = 0;
 
+
   for (int i = 0; i < JSN_READINGS; i++) {
     float d = jsnReadOnce();
+
 
     if (d >= 0) {
       sum += d;
@@ -640,6 +796,7 @@ float getDistanceCM(bool verbose = false) {
       if (d < minVal) minVal = d;
       if (d > maxVal) maxVal = d;
     }
+
 
     mqtt.loop();
     // Use millis()-based gap so MQTT stays responsive during wait
@@ -649,6 +806,7 @@ float getDistanceCM(bool verbose = false) {
       delay(5);
     }
   }
+
 
   if (valid < JSN_READINGS / 2 + 1) {
     if (verbose) {
@@ -661,7 +819,9 @@ float getDistanceCM(bool verbose = false) {
     return 999.0;
   }
 
+
   float average = sum / valid;
+
 
   if (verbose) {
     Serial.print("[JSN] Average: ");
@@ -672,12 +832,14 @@ float getDistanceCM(bool verbose = false) {
     Serial.print(JSN_READINGS);
     Serial.println(" valid readings)");
 
+
     float variation = (valid > 1) ? (maxVal - minVal) : 0.0;
     if (variation > JSN_STABILITY_THRESHOLD) {
       Serial.println("[JSN] WARNING: Readings are UNSTABLE.");
     } else {
       Serial.println("[JSN] Readings are stable.");
     }
+
 
     if (average < JSN_BLIND_ZONE_CM) {
       Serial.println("[JSN] WARNING: Inside blind zone (<20 cm).");
@@ -686,8 +848,13 @@ float getDistanceCM(bool verbose = false) {
     }
   }
 
+
   return average;
 }
+
+
+
+
 
 
 
@@ -703,21 +870,26 @@ float calibrateBaseline() {
   Serial.println("[JSN] Taking 10 readings over ~5 s...");
   Serial.println("=================================");
 
+
   float total  = 0;
   int   count  = 0;
   float minVal = 9999;
   float maxVal = 0;
 
+
   unsigned long lastReading = millis();
+
 
   while (count < 10) {
     mqtt.loop();
     if (millis() - lastReading >= 500) {
       float d = jsnReadOnce();
 
+
       Serial.print("[JSN] Baseline ");
       Serial.print(count + 1);
       Serial.print("/10: ");
+
 
       if (d < 0) {
         Serial.println("NO ECHO -- skipped");
@@ -730,11 +902,14 @@ float calibrateBaseline() {
         count++;
       }
 
+
       lastReading = millis();
     }
   }
 
+
   float baseline = total / 10.0;
+
 
   Serial.println();
   Serial.println("===== CALIBRATION COMPLETE =====");
@@ -742,10 +917,12 @@ float calibrateBaseline() {
   Serial.print(baseline);
   Serial.println(" cm");
 
+
   float variation = maxVal - minVal;
   Serial.print("[JSN] Calibration Variation: ");
   Serial.print(variation);
   Serial.println(" cm");
+
 
   if (variation > JSN_STABILITY_THRESHOLD) {
     Serial.println("[JSN] WARNING: Sensor unstable during calibration!");
@@ -753,11 +930,17 @@ float calibrateBaseline() {
     Serial.println("[JSN] Sensor appears stable.");
   }
 
+
   Serial.println("=================================");
   Serial.println();
 
+
   return baseline;
 }
+
+
+
+
 
 
 
@@ -819,9 +1002,11 @@ float calibrateBaseline() {
 //     worked, instead of always claiming success
 // --------------------------------------------------------------------
 
+
 // ================================
 // SIM800L — non-blocking helpers
 // ================================
+
 
 // Drains the SIM800 serial buffer into the accumulated response string.
 // Returns the full accumulated buffer so far (cleared by
@@ -834,15 +1019,18 @@ String sim800ReadNB() {
   return sim800Buf;
 }
 
+
 void sim800ClearBuf() {
   sim800Buf = "";
 }
+
 
 void sim800SendCmd(const String& cmd) {
   Serial.print("[SIM800] -> ");
   Serial.println(cmd);
   sim800.println(cmd);
 }
+
 
 // ================================
 // SMS — non-blocking state machine
@@ -852,6 +1040,7 @@ void sim800SendCmd(const String& cmd) {
 // sends one AT command and then returns; the response is checked on
 // subsequent iterations.  The entire sequence takes several loop cycles
 // but never blocks for more than ~5ms per call.
+
 
 // Start the SMS sequence.  Sets smsStep to the first step so that
 // processSMS() will pick it up on the next loop iteration.
@@ -864,13 +1053,16 @@ void smsBegin(const String& msg) {
   Serial.println("[SMS] State machine started.");
 }
 
+
 // Called once per loop() iteration.  Advances the SMS state machine
 // one step at a time without blocking.  Sets smsSent = true when the
 // sequence is done (success or failure).
 void processSMS() {
   if (smsStep == SMS_IDLE || smsStep == SMS_DONE || smsStep == SMS_FAILED) return;
 
+
   String resp = sim800ReadNB();  // non-blocking drain
+
 
   // --- Timeout per step: ~3s (covers multiple loop cycles) ---
   unsigned long elapsed = millis() - smsCmdSentAt;
@@ -890,7 +1082,9 @@ void processSMS() {
     smsCmdSentAt = 0;
   }
 
+
   switch (smsStep) {
+
 
     // --- 1. Send AT, wait for OK ---
     case SMS_SEND_AT:
@@ -905,6 +1099,7 @@ void processSMS() {
         sim800ClearBuf();
       }
       break;
+
 
     // --- 2. Send AT+CSQ, check signal ---
     case SMS_SEND_CSQ:
@@ -927,6 +1122,7 @@ void processSMS() {
       }
       break;
 
+
     // --- 3. Send AT+CREG?, check registration ---
     case SMS_SEND_CREG:
       sim800SendCmd("AT+CREG?");
@@ -943,6 +1139,7 @@ void processSMS() {
       }
       break;
 
+
     // --- 4. Set text mode ---
     case SMS_SEND_CMGF:
       sim800SendCmd("AT+CMGF=1");
@@ -956,6 +1153,7 @@ void processSMS() {
       }
       break;
 
+
     // --- 5. Send AT+CMGS, wait for ">" prompt ---
     case SMS_SEND_CMGS:
       sim800SendCmd("AT+CMGS=\"+639218255596\"");
@@ -968,6 +1166,7 @@ void processSMS() {
         sim800ClearBuf();
       }
       break;
+
 
     // --- 6. Send message body + Ctrl+Z ---
     case SMS_SEND_BODY:
@@ -988,9 +1187,11 @@ void processSMS() {
       }
       break;
 
+
     default:
       break;
   }
+
 
   if (smsStep == SMS_DONE) {
     Serial.println("[SMS] ---- Send complete ----");
@@ -1008,6 +1209,10 @@ void processSMS() {
 
 
 
+
+
+
+
 // ================================
 // SETUP
 // ================================
@@ -1015,13 +1220,16 @@ void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
   Serial.begin(115200);
 
+
   Serial.println();
   Serial.println("=================================");
   Serial.println("  Crayfish Monitor -- Booting");
   Serial.println("=================================");
 
+
   Wire.begin(I2C_SDA, I2C_SCL);
   lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE, 0x23, &Wire);
+
 
   // Initialise FastLED then push one single black frame so every
   // pixel powers up consistently off (no partial/garbage frame left
@@ -1029,6 +1237,7 @@ void setup() {
   FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
   FastLED.setBrightness(LED_BRIGHTNESS);
   ledAllOff();
+
 
   tempSensor.begin();
   feeder.setSpeed(10);
@@ -1048,21 +1257,29 @@ void setup() {
   sim800.begin(9600, SERIAL_8N1, SIM800_RX, SIM800_TX);
   delay(1000);  // let the module's UART settle before the first AT command
 
+
   pinMode(AIR_PUMP, OUTPUT);        digitalWrite(AIR_PUMP, HIGH);
   pinMode(PUMP_RELAY_PIN, OUTPUT);  digitalWrite(PUMP_RELAY_PIN, HIGH);
   pinMode(COOLING_RELAY, OUTPUT);   digitalWrite(COOLING_RELAY, HIGH);
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
 
+
   connectWiFi();
   connectMQTT();
 
+
   baselineDistance = calibrateBaseline();
+
 
   Serial.println("[SYSTEM] Ready.");
   Serial.println("=================================");
   Serial.println();
 }
+
+
+
+
 
 
 
@@ -1082,6 +1299,7 @@ void setup() {
 //   TOTAL             = ~2,531ms
 // --------------------------------------------------
 
+
 void loop() {
   if (!mqtt.connected()) {
     connectMQTT();
@@ -1089,12 +1307,15 @@ void loop() {
   mqtt.loop();
   processSMS();   // non-blocking SMS state machine — never blocks the loop
 
+
   Serial.println();
   Serial.println("========== SENSOR READINGS ==========");
+
 
   // --- 1. Distance (takes ~1.5s, but services MQTT during gaps) ---
   float distance = getDistanceCM(false);
   mqttPublish(TOPIC_DISTANCE, distance);
+
 
   Serial.print("[SENSOR] Distance  : ");
   if (distance >= 999.0) {
@@ -1108,6 +1329,7 @@ void loop() {
     Serial.println(" cm");
   }
 
+
   if (smsStep == SMS_IDLE && !smsSent && distance < (baselineDistance - DETECTION_OFFSET_CM)) {
     String smsMsg = "CRAYFISH DETECTED INSIDE HIDE.\nBehavior: Occupying Shelter.\nDistance: " + String(distance, 2) + " cm";
     Serial.println("[ALERT] Crayfish inside hide -- starting SMS (non-blocking)");
@@ -1115,16 +1337,19 @@ void loop() {
     smsBegin(smsMsg);
   }
 
+
   if (smsSent && smsStep == SMS_IDLE && distance > (baselineDistance - 1.0)) {
     smsSent = false;
     Serial.println("[ALERT] Crayfish exited hide -- SMS reset.");
   }
+
 
   // --- 3. pH (150ms) ---
   float raw     = getAvgPHRaw();
   float voltage = (raw / 4095.0) * 3.3;
   float pH      = 7.0 + SLOPE * (voltage - VOLTAGE_AT_7);
   mqttPublish(TOPIC_PH, pH);
+
 
   Serial.print("[SENSOR] pH        : ");
   Serial.print(pH, 2);
@@ -1134,6 +1359,7 @@ void loop() {
   Serial.print(voltage, 3);
   Serial.println(" V)");
 
+
   if (pH < PH_SAFE_LOW) {
     Serial.println("[pH] WARNING: Below safe range!");
   } else if (pH > PH_SAFE_HIGH) {
@@ -1142,6 +1368,7 @@ void loop() {
     Serial.println("[pH] Within safe range.");
   }
 
+
   if (ctrlAirPump.mode == AUTO) {
     bool outOfRange = pH < (PH_SAFE_LOW - 0.1) || pH > (PH_SAFE_HIGH + 0.1);
     bool inRange    = pH >= PH_SAFE_LOW && pH <= PH_SAFE_HIGH;
@@ -1149,29 +1376,65 @@ void loop() {
     if ( airPumpOn && inRange)    setAirPump(false);
   }
 
-  // --- 4. Turbidity (instant) ---
-  int turbidity = analogRead(TURBIDITY_PIN);
-  mqttPublish(TOPIC_TURBIDITY, (float)turbidity);
 
-  Serial.print("[SENSOR] Turbidity : ");
-  Serial.print(turbidity);
-  if (turbidity > TURBIDITY_THRESHOLD) {
-    Serial.println(" -- DIRTY (pump ON)");
+// --- 4. Turbidity with moving average and hysteresis ---
+int rawTurbidity = analogRead(TURBIDITY_PIN);
+
+
+// Moving average filter
+turbiditySum -= turbidityReadings[turbidityIndex];
+turbidityReadings[turbidityIndex] = rawTurbidity;
+turbiditySum += rawTurbidity;
+turbidityIndex = (turbidityIndex + 1) % TURBIDITY_SAMPLES;
+smoothedTurbidity = turbiditySum / TURBIDITY_SAMPLES;
+
+
+int turbidity = smoothedTurbidity;  // Use smoothed value for all logic
+mqttPublish(TOPIC_TURBIDITY, (float)turbidity);
+
+
+Serial.print("[SENSOR] Turbidity : ");
+Serial.print(turbidity);
+Serial.print(" (raw: ");
+Serial.print(rawTurbidity);
+Serial.print(")");
+
+
+// Hysteresis logic - pump turns ON when turbidity is LOW (dirty water)
+if (ctrlPump.mode == AUTO) {
+  bool shouldPump = lastPumpState;  // Keep current state by default
+ 
+  if (!lastPumpState && turbidity < TURBIDITY_ON_THRESHOLD) {
+    // Pump is OFF and turbidity is LOW (dirty) -> turn ON
+    shouldPump = true;
+    Serial.print(" -- DIRTY (pump ON)");
+  } else if (lastPumpState && turbidity > TURBIDITY_OFF_THRESHOLD) {
+    // Pump is ON and turbidity is HIGH (clean) -> turn OFF
+    shouldPump = false;
+    Serial.print(" -- CLEAR (pump OFF)");
   } else {
-    Serial.println(" -- CLEAR (pump OFF)");
+    // Stay in current state (hysteresis)
+    Serial.print(lastPumpState ? " -- DIRTY (pump ON)" : " -- CLEAR (pump OFF)");
   }
+ 
+  if (shouldPump != lastPumpState) {
+    setPump(shouldPump);
+    lastPumpState = shouldPump;
+  }
+} else {
+  // Manual mode - just show status
+  Serial.print(ctrlPump.manualState ? " -- MANUAL ON" : " -- MANUAL OFF");
+}
 
-  if (ctrlPump.mode == AUTO) {
-    bool shouldPump = turbidity > TURBIDITY_THRESHOLD;
-    if (shouldPump != lastPumpState) {
-      setPump(shouldPump);
-      lastPumpState = shouldPump;
-    }
-  }
+
+
+
+
 
   // --- 5. Light (~120ms) ---
   float lux = lightMeter.readLightLevel();
   mqttPublish(TOPIC_LUX, lux);
+
 
   Serial.print("[SENSOR] Lux       : ");
   Serial.print(lux, 2);
@@ -1181,12 +1444,15 @@ void loop() {
   Serial.print(LUX_LED_OFF, 0);
   Serial.print(" lx)  -- ");
 
+
   if (ctrlLED.mode == AUTO) {
     bool shouldBeOn;
+
 
     if      (!ledCurrentlyOn && lux < LUX_LED_ON)   shouldBeOn = true;
     else if ( ledCurrentlyOn && lux > LUX_LED_OFF)  shouldBeOn = false;
     else                                              shouldBeOn = ledCurrentlyOn;
+
 
     Serial.println(shouldBeOn ? "DARK  -> LED ON" : "BRIGHT -> LED OFF");
     applyLED(shouldBeOn);
@@ -1195,14 +1461,17 @@ void loop() {
     applyLED(ctrlLED.manualState);
   }
 
+
   // --- 6. Temperature (blocking read, reliable) ---
   tempSensor.requestTemperatures();
   float temp = tempSensor.getTempCByIndex(0);
   mqttPublish(TOPIC_TEMP, temp);
 
+
   Serial.print("[SENSOR] Temp      : ");
   Serial.print(temp, 2);
   Serial.println(" C");
+
 
   if (temp >= COOL_ON_TEMP) {
     Serial.println("[TEMP] WARNING: High temp -- cooling ON.");
@@ -1210,10 +1479,12 @@ void loop() {
     Serial.println("[TEMP] Temp normal -- cooling OFF.");
   }
 
+
   if (ctrlCooling.mode == AUTO) {
     if (temp >= COOL_ON_TEMP)  setCooling(true);
     if (temp <= COOL_OFF_TEMP) setCooling(false);
   }
+
 
   // --- 7. Feeder (Auto via Serial command) ---
   if (ctrlFeeder.mode == AUTO && Serial.available()) {
@@ -1224,6 +1495,7 @@ void loop() {
     }
   }
 
+
   // --- 8. Batch publish all sensor readings in ONE MQTT message ---
   String batch = "{\"ph\":" + String(pH, 2)
     + ",\"temp\":" + String(temp, 2)
@@ -1233,5 +1505,9 @@ void loop() {
     + "}";
   mqttPublish(TOPIC_SENSORS_BATCH, batch.c_str());
 
+
   Serial.println("=====================================");
 }
+
+
+

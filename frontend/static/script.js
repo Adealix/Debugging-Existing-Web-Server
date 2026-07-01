@@ -400,15 +400,15 @@ if (data.rgb_brightness!==undefined) {
 }
 
 
-if (currentMode !== 'MANUAL') {
-  refreshAllActuatorButtons(data);
-}
-
-
-// Mode UI — only update if server disagrees with our local state
+// Mode UI — update BEFORE actuator buttons so currentMode is correct
 const serverMode = (data.mode || 'AUTO').toUpperCase();
 if (serverMode !== currentMode && currentMode !== 'MANUAL') {
    applyModeUI(serverMode);
+}
+
+
+if (currentMode !== 'MANUAL') {
+  refreshAllActuatorButtons(data);
 }
 
 
